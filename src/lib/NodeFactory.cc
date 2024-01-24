@@ -56,9 +56,9 @@ NodeIndex AndersNodeFactory::createValueNode(const Value* val) {
     return nextIdx;
 }
 
-NodeIndex AndersNodeFactory::createObjectNode(const Value* val, const bool uo, const bool heap) {
+NodeIndex AndersNodeFactory::createOpaqueObjectNode(const Value* val, const bool heap) {
     unsigned nextIdx = nodes.size();
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, 0, uo, heap));
+    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, 0, false, heap, true));
     if (val != nullptr) {
         if (objNodeMap.count(val))
             return objNodeMap[val];
@@ -68,13 +68,25 @@ NodeIndex AndersNodeFactory::createObjectNode(const Value* val, const bool uo, c
     return nextIdx;
 }
 
-NodeIndex AndersNodeFactory::createObjectNode(const NodeIndex base, const unsigned offset, const bool uo, const bool heap) {
+NodeIndex AndersNodeFactory::createObjectNode(const Value* val, const bool uniono, const bool heap) {
+    unsigned nextIdx = nodes.size();
+    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, 0, uniono, heap));
+    if (val != nullptr) {
+        if (objNodeMap.count(val))
+            return objNodeMap[val];
+        objNodeMap[val] = nextIdx;
+    }
+
+    return nextIdx;
+}
+
+NodeIndex AndersNodeFactory::createObjectNode(const NodeIndex base, const unsigned offset, const bool uniono, const bool heap) {
     assert(offset != 0);
 
     unsigned nextIdx = nodes.size();
     assert(nextIdx == base + offset);
     const Value *val = getValueForNode(base);
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, nullptr, offset, uo, heap));
+    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, offset, uniono, heap));
 
     return nextIdx;
 }
@@ -201,12 +213,12 @@ NodeIndex AndersNodeFactory::getObjectNodeFor(const Value* val) {
         const GlobalValue* gval = dyn_cast<GlobalValue>(c);
         if (gval && gval->isDeclaration()) {
             if (isa<GlobalVariable>(gval)) {
-                auto itr = gobjMap->find(gval->getName());
+                auto itr = gobjMap->find(gval->getName().str());
                 if(itr != gobjMap->end()) {
                     val = itr->second;
                 }
             } else if (isa<Function>(gval)) {
-                auto itr = funcMap->find(gval->getName());
+                auto itr = funcMap->find(gval->getName().str());
                 if (itr != funcMap->end())
                     val = itr->second;
             }
@@ -281,7 +293,11 @@ unsigned AndersNodeFactory::constGEPtoFieldNum(const llvm::ConstantExpr* expr) c
     assert(expr->getOpcode() == Instruction::GetElementPtr && "constGEPtoVariable receives a non-gep expr!");
 
     int64_t offset = getGEPOffset(expr, dataLayout);
+#if LLVM_VERSION_MAJOR > 11
+    return offsetToFieldNum(getUnderlyingObject(expr, 0), offset, dataLayout, structAnalyzer, module);
+#else
     return offsetToFieldNum(GetUnderlyingObject(expr, *dataLayout, 0), offset, dataLayout, structAnalyzer, module);
+#endif
 }
 
 void AndersNodeFactory::mergeNode(NodeIndex n0, NodeIndex n1) {

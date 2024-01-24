@@ -36,17 +36,19 @@ public:
     };
 private:
     AndersNodeType type;
-    const bool isUnionObj;
-    const bool isHeapNode;
     NodeIndex idx, mergeTarget;
     const llvm::Value* value;
     const NodeIndex offset;
+    const bool isUnionObj;
+    const bool isHeapNode;
+    const bool isOpaqueObj;
     int storeFlag;
 
     AndersNode(AndersNodeType t, unsigned i, const llvm::Value* v = NULL, const unsigned off = 0,
-               const bool uo = false, const bool heap = false, int _storeFlag = 0)
+               const bool uniono = false, const bool heap = false, const bool opaque = false,
+               int _storeFlag = 0)
             : type(t), idx(i), mergeTarget(i), value(v), offset(off),
-              isUnionObj(uo), isHeapNode(heap), storeFlag(_storeFlag) {}
+              isUnionObj(uniono), isHeapNode(heap), isOpaqueObj(opaque), storeFlag(_storeFlag) {}
 
 public:
     NodeIndex getIndex() const { return idx; }
@@ -131,9 +133,11 @@ public:
     // Factory methods
     NodeIndex createValueNode(const llvm::Value* val = NULL);
     NodeIndex createObjectNode(const llvm::Value* val = NULL,
-        const bool uo = false, const bool heap = false);
+        const bool uniono = false, const bool heap = false);
     NodeIndex createObjectNode(const NodeIndex base, const unsigned offset,
-        const bool uo = false, const bool heap = false);
+        const bool uniono = false, const bool heap = false);
+    NodeIndex createOpaqueObjectNode(const llvm::Value* val = NULL,
+        const bool heap = false);
     NodeIndex createReturnNode(const llvm::Function* f);
     NodeIndex createVarargNode(const llvm::Function* f);
 

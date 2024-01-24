@@ -22,7 +22,7 @@
 #include "CallGraph.h"
 #include "Annotation.h"
 
-//#define TYPE_BASED
+#define TYPE_BASED
 
 using namespace llvm;
 
@@ -35,7 +35,13 @@ Function* CallGraphPass::getFuncDef(Function *F) {
 } 
 
 bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
-    if (T1->isPointerTy()) {
+    if (T1 == T2) {
+        return true;
+#if LLVM_VERSION_MAJOR > 9
+    } else if (T1->isVoidTy()) {
+        return T2->isVoidTy();
+#endif
+    } else if (T1->isPointerTy()) {
         if (!T2->isPointerTy())
             return false;
 
@@ -122,7 +128,11 @@ bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
 }
 
 bool CallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
+#if LLVM_VERSION_MAJOR > 10
+    CallBase &CS = *CI;
+#else
     CallSite CS(CI);
+#endif
     //errs() << *CI << "\n";
     for (Function *F : Ctx->AddressTakenFuncs) {
 
@@ -144,7 +154,7 @@ bool CallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
 
         // type matching on args
         bool Matched = true;
-        CallSite::arg_iterator AI = CS.arg_begin();
+        auto AI = CS.arg_begin();
         for (Function::arg_iterator FI = F->arg_begin(), FE = F->arg_end();
              FI != FE; ++FI, ++AI) {
             // check type mis-match
@@ -272,7 +282,11 @@ bool CallGraphPass::findFunctions(Value *V, FuncSet &S,
         // update callsite info first
         FuncSet &FS = Ctx->Callees[CI];
         //FS.setCallerInfo(CI, &Ctx->Callers);
+#if LLVM_VERSION_MAJOR > 10
+        findFunctions(CI->getCalledOperand(), FS);
+#else
         findFunctions(CI->getCalledValue(), FS);
+#endif
         bool Changed = false;
         for (Function *CF : FS) {
             bool InsertEmpty = isFunctionPointer(CI->getType());
@@ -454,10 +468,12 @@ void CallGraphPass::processInitializers(Module *M, Constant *C, GlobalValue *V, 
 bool CallGraphPass::doInitialization(Module *M) {
 
     // collect function pointer assignments in global initializers
+#ifndef TYPE_BASED
     for (GlobalVariable &G : M->globals()) {
         if (G.hasInitializer())
             processInitializers(M, G.getInitializer(), &G, "");
     }
+#endif
 
     for (Function &F : *M) { 
         // collect address-taken functions
@@ -529,30 +545,37 @@ void CallGraphPass::dumpCallees() {
         if (CI->isInlineAsm() || CI->getCalledFunction() /*|| v.empty()*/)
              continue;
 
-        OS << "CS:" << *CI << "\n";
-        const DebugLoc &LOC = CI->getDebugLoc();
-        OS << "LOC: ";
-        LOC.print(OS);
-        OS << "^@^";
-#if 0
+        // OS << "CS:" << *CI << "\n";
+        // const DebugLoc &LOC = CI->getDebugLoc();
+        // OS << "LOC: ";
+        // LOC.print(OS);
+        // OS << "^@^";
+        std::string prefix = "<" + CI->getParent()->getParent()->getParent()->getName().str() + ">"
+            + CI->getParent()->getParent()->getName().str() + "::";
+#if 1
         for (FuncSet::iterator j = v.begin(), ej = v.end();
              j != ej; ++j) {
             //OS << "\t" << ((*j)->hasInternalLinkage() ? "f" : "F")
             //    << " " << (*j)->getName() << "\n";
-            OS << (*j)->getName() << "::";
+            OS << prefix << *CI << "\t";
+            OS << (*j)->getName() << "\n";
         }
 #endif
-        OS << "\n";
+        // OS << "\n";
 
-        v = Ctx->Callees[CI];
-        OS << "Callees: ";
-        for (FuncSet::iterator j = v.begin(), ej = v.end();
-             j != ej; ++j) {
-            OS << (*j)->getName() << "::";
-        }
-        OS << "\n";
+        // v = Ctx->Callees[CI];
+        // OS << "Callees: ";
+        // for (FuncSet::iterator j = v.begin(), ej = v.end();
+        //      j != ej; ++j) {
+        //     OS << (*j)->getName() << "::";
+        // }
+        // OS << "\n";
         if (v.empty()) {
+#if LLVM_VERSION_MAJOR > 10
+            OS << "!!EMPTY =>" << *CI->getCalledOperand()<<"\n";
+#else
             OS << "!!EMPTY =>" << *CI->getCalledValue()<<"\n";
+#endif
             OS<< "Uninitialized function pointer is dereferenced!\n";
         }
     }

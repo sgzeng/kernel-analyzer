@@ -16,23 +16,22 @@
 class StructInfo
 {
 private:
-	// FIXME: vector<bool> is considered to be BAD C++ practice. We have to switch to something else like deque<bool> some time in the future
-	std::vector<bool> arrayFlags;
-	std::vector<bool> pointerFlags;
-	std::vector<bool> unionFlags;
+	std::vector<bool> arrayFlags;  // true if field is an array
+	std::vector<bool> pointerFlags; // true if field is a pointer
+	std::vector<bool> unionFlags; // true if field is a union
 	std::vector<unsigned> fieldSize;
-	std::vector<unsigned> offsetMap;
-	std::vector<unsigned> fieldOffset;
-	std::vector<unsigned> fieldRealSize;
+	std::vector<unsigned> offsetMap; // field index to expanded field index
+	std::vector<unsigned> fieldOffset; // field index => offset in bytes
+	std::vector<unsigned> fieldRealSize; // field index => allocation size in bytes
 
-	// field => type(s) map
+	// field => type(s) map, stripping off arrays
 	std::map<unsigned, std::set<const llvm::Type*> > elementType;
 	
 	// the corresponding data layout for this struct
 	const llvm::DataLayout* dataLayout;
 	void setDataLayout(const llvm::DataLayout* layout) { dataLayout = layout; }
 
-	// real type
+	// real type definition
 	const llvm::StructType* stType;
 	void setRealType(const llvm::StructType* st) { stType = st; }
 
@@ -40,7 +39,7 @@ private:
 	const llvm::Module* module;
 	void setModule(const llvm::Module* M) { module = M; }
 
-	// container type(s)
+	// container type(s), i.e., the struct(s) that contain this struct at the specified offset
 	std::set<std::pair<const llvm::StructType*, unsigned> > containers;
 	void addContainer(const llvm::StructType* st, unsigned offset)
 	{

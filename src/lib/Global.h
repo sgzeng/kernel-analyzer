@@ -36,6 +36,9 @@ typedef std::unordered_map<std::string, FuncSet> FuncPtrMap;
 typedef llvm::DenseMap<llvm::Function*, CallInstSet> CallerMap;
 typedef llvm::DenseMap<llvm::CallInst*, FuncSet> CalleeMap;
 
+typedef std::unordered_map<NodeIndex, AndersPtsSet> PtsGraph;
+typedef std::unordered_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;
+
 class GlobalContext {
 private:
   // pass specific data
@@ -66,8 +69,14 @@ public:
   // Map global object name to object definition
   GObjMap Gobjs;
 
+  // Map external global object name to declaration
+  GObjMap ExtGobjs;
+
   // Map global function name to function defination
   FuncMap Funcs;
+
+  // Map external global function name to declaration
+  FuncMap ExtFuncs;
 
   // Map function pointers (IDs) to possible assignments
   FuncPtrMap FuncPtrs;
@@ -86,6 +95,9 @@ public:
 
   // A factory object that knows how to manage AndersNodes
   AndersNodeFactory nodeFactory;
+
+  // Global init point-to graph
+  PtsGraph GlobalInitPtsGraph;
 
   ModuleList Modules;
 

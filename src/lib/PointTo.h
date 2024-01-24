@@ -1,14 +1,10 @@
 #ifndef POINTTO_H
 #define POINTTO_H
 
-#include <map>
+#include <unordered_map>
 
 #include "Global.h"
-#include "PtsSet.h"
 #include "NodeFactory.h"
-
-typedef std::map<NodeIndex, AndersPtsSet> PtsGraph;
-typedef std::map<const llvm::Instruction*, PtsGraph> NodeToPtsGraph;
 
 void populateNodeFactory(GlobalContext &GlobalCtx);
 

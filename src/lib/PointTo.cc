@@ -82,6 +82,12 @@ static void createNodeForPointerVal(const Value *V, const Type *T, const NodeInd
 
   assert(valNode != AndersNodeFactory::InvalidIndex);
 
+#if LLVM_VERSION_MAJOR > 13
+  // Assuming opaque pointer type
+    // We don't know what it points to, so we create an opaque object node
+  nodeFactory.createOpaqueObjectNode(V);
+#else
+
   const Type *type = cast<PointerType>(T)->getElementType();
 
   // An array is considered a single variable of its type.
@@ -99,9 +105,11 @@ static void createNodeForPointerVal(const Value *V, const Type *T, const NodeInd
   } else {
     nodeFactory.createObjectNode(V);
   }
+#endif
 }
 
-static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
+static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory,
+                                 StructAnalyzer &structAnalyzer, PtsGraph &ptsGraph) {
 
   for (auto const& GV: M->globals()) {
     if (GV.isDeclaration())
@@ -109,13 +117,28 @@ static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory, Stru
 
     NodeIndex valNode = nodeFactory.createValueNode(&GV);
 
-    const Type *type = GV.getType();
-    if (type->isPointerTy())
-      createNodeForPointerVal(&GV, type, valNode, nodeFactory, structAnalyzer);
+    const Constant *init = GV.getInitializer();
+    if (init) {
+      // defined global variables should have initializers
+      if (isa<ConstantAggregate>(init)) {
+        // well, since the GV is of (opaque) pointer type, we have to rely on the type of initializer
+        const Type *type = init->getType();
+
+      } else {
+        NodeIndex objNode = nodeFactory.createObjectNode(&GV);
+        ptsGraph[valNode].insert(objNode);
+      }
+    // if (type->isPointerTy()) {
+    //   createNodeForPointerVal(&GV, type, valNode, nodeFactory, structAnalyzer);
+    // } else {
+    //   llvm::outs() << "GV:" << GV.getName() << ", not ptr type: " << *type << "\n";
+    } else {
+      llvm::errs() << "GV:" << GV.getName() << ", no initializer\n";
+    }
   }
 
   for (auto const& F: *M) {
-    if (F.isDeclaration() || F.isIntrinsic())
+    if (F.isDeclaration() || F.isIntrinsic() || F.empty())
       continue;
 
     // Create return node
@@ -132,8 +155,7 @@ static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory, Stru
 
     // Create node for address taken function
     if (F.hasAddressTaken()) {
-      NodeIndex fVal = nodeFactory.createValueNode(&F);
-      //NodeIndex fObj = nodeFactory.createObjectNode(&F);
+      NodeIndex fObj = nodeFactory.createObjectNode(&F);
     }
   }
 }
@@ -143,6 +165,13 @@ static void createNodeForHeapObject(const Instruction *I, int SizeArg, int FlagA
 
   const PointerType* pType = dyn_cast<PointerType>(I->getType());
   assert(pType != NULL && "unhandled malloc function");
+
+#if LLVM_VERSION_MAJOR > 13
+  // Assuming opaque pointer type
+  // We don't know what it points to, so we create an opaque object node
+  nodeFactory.createOpaqueObjectNode(I, true);
+  return;
+#else
   const Type* elemType = pType->getElementType();
 
   // TODO: using casting is not the best way, consider sizeof
@@ -203,6 +232,7 @@ static void createNodeForHeapObject(const Instruction *I, int SizeArg, int FlagA
       nodeFactory.createObjectNode(obj, i, isUnion, true);
     }
   }
+#endif
 }
 
 void populateNodeFactory(GlobalContext &GlobalCtx) {
@@ -210,15 +240,30 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
   AndersNodeFactory &nodeFactory = GlobalCtx.nodeFactory;
   StructAnalyzer &structAnalyzer = GlobalCtx.structAnalyzer;
 
+  nodeFactory.setStructAnalyzer(&structAnalyzer);
+  nodeFactory.setGobjMap(&GlobalCtx.Gobjs);
+  nodeFactory.setFuncMap(&GlobalCtx.Funcs);
+
+  PtsGraph &ptsGraph = GlobalCtx.GlobalInitPtsGraph;
+
+  // universal ptr points to universal obj
+  ptsGraph[nodeFactory.getUniversalPtrNode()].insert(nodeFactory.getUniversalObjNode());
+  // universal obj points to universal obj
+  ptsGraph[nodeFactory.getUniversalObjNode()].insert(nodeFactory.getUniversalObjNode());
+  // null ptr points to null obj
+  ptsGraph[nodeFactory.getNullPtrNode()].insert(nodeFactory.getNullObjectNode());
+  // null obj points to nothing, so empty
+  ptsGraph[nodeFactory.getNullObjectNode()];
+
   for (auto i = GlobalCtx.Modules.begin(), e = GlobalCtx.Modules.end(); i != e; ++i) {
     Module *M = i->first;
     nodeFactory.setDataLayout(&(M->getDataLayout()));
     nodeFactory.setModule(M);
 
-    createNodeForGlobals(M, nodeFactory, structAnalyzer);
+    createNodeForGlobals(M, nodeFactory, structAnalyzer, ptsGraph);
 
     for (auto const& F: *M) {
-      if (F.isDeclaration() || F.isIntrinsic())
+      if (F.isDeclaration() || F.isIntrinsic() || F.empty())
         continue;
     
       int size, flag;
@@ -295,6 +340,9 @@ unsigned offsetToFieldNum(const Value* ptr, int64_t offset, const DataLayout* da
   if (offset < 0)
     return 0;
 
+#if LLVM_VERSION_MAJOR > 13
+  return 0;
+#else
   Type* trueElemType = cast<PointerType>(ptr->getType())->getElementType();
   //errs()<<"Inside offset to field num:\n";
   //errs()<<"1trueElemType: "<<*trueElemType<<"\n";
@@ -354,4 +402,5 @@ unsigned offsetToFieldNum(const Value* ptr, int64_t offset, const DataLayout* da
   }
 
   return ret;
+#endif
 }

@@ -3,8 +3,8 @@
  *
  * Copyright (C) 2012 Xi Wang, Haogang Chen, Nickolai Zeldovich
  * Copyright (C) 2015 Byoungyoung Lee
- * Copyright (C) 2015 - 2019 Chengyu Song 
  * Copyright (C) 2016 Kangjie Lu
+ * Copyright (C) 2015 - 2023 Chengyu Song 
  *
  * For licensing details see LICENSE
  */
@@ -39,24 +39,23 @@ cl::list<std::string> InputFilenames(
   cl::Positional, cl::OneOrMore, cl::desc("<input bitcode files>"));
 
 cl::opt<unsigned> VerboseLevel(
-  "htleak-verbose", cl::desc("Print information about actions taken"),
-  cl::init(0));
+  "verbose", cl::desc("Verbose level"), cl::init(0));
 
-cl::opt<bool> DumpCallees(
-  "dump-call-graph", cl::desc("Dump call graph"), cl::NotHidden, cl::init(false));
+// cl::opt<bool> DumpCallees(
+//   "dump-call-graph", cl::desc("Dump call graph"), cl::NotHidden, cl::init(false));
 
-cl::opt<bool> DumpCallers(
-  "dump-caller-graph", cl::desc("Dump caller graph"), cl::NotHidden, cl::init(false));
+// cl::opt<bool> DumpCallers(
+//   "dump-caller-graph", cl::desc("Dump caller graph"), cl::NotHidden, cl::init(false));
 
-cl::opt<bool> DoSafeStack(
-  "safe-stack", cl::desc("Perfrom safe stack analysis"), cl::NotHidden, cl::init(false));
+// cl::opt<bool> DoSafeStack(
+//   "safe-stack", cl::desc("Perfrom safe stack analysis"), cl::NotHidden, cl::init(false));
 
-cl::opt<bool> DumpStackStats(
-  "dump-stack-stats", cl::desc("Dump stack stats"), cl::NotHidden, cl::init(false));
+// cl::opt<bool> DumpStackStats(
+//   "dump-stack-stats", cl::desc("Dump stack stats"), cl::NotHidden, cl::init(false));
 
-cl::opt<bool> DoLSS(
-  "linux-ss", cl::desc("Discover security sensitive data in Linux kernel"),
-  cl::NotHidden, cl::init(false));
+// cl::opt<bool> DoLSS(
+//   "linux-ss", cl::desc("Discover security sensitive data in Linux kernel"),
+//   cl::NotHidden, cl::init(false));
 
 GlobalContext GlobalCtx;
 
@@ -113,20 +112,29 @@ void doBasicInitialization(Module *M) {
   GlobalCtx.structAnalyzer.run(M, &(M->getDataLayout()));
 
   // collect global object definitions
-  for (GlobalVariable &G : M->globals()) {
-    if (G.hasExternalLinkage())
-      GlobalCtx.Gobjs[G.getName()] = &G;
+  for (GlobalVariable &GV : M->globals()) {
+    if (GV.hasExternalLinkage()) {
+      std::string GVName = GV.getName().str();
+      if (!GV.isDeclaration()) {
+        assert(GlobalCtx.Gobjs.count(GVName) == 0);
+        GlobalCtx.Gobjs[GVName] = &GV;
+      } else {
+        GlobalCtx.ExtGobjs[GVName] = &GV;
+      }
+    }
   }
 
   // collect global function definitions
   for (Function &F : *M) {
-    if (F.hasExternalLinkage() && !F.empty()) {
+    if (F.hasExternalLinkage()) {
       // external linkage always ends up with the function name
       std::string FName = F.getName().str();
-      if (FName.find("SyS_") == 0)
-        FName = "sys_" + FName.substr(4);
-      assert(GlobalCtx.Funcs.count(FName) == 0);
-      GlobalCtx.Funcs[FName] = &F;
+      if (!F.isDeclaration() && !F.empty()) {
+        assert(GlobalCtx.Funcs.count(FName) == 0);
+        GlobalCtx.Funcs[FName] = &F;
+      } else {
+        GlobalCtx.ExtFuncs[FName] = &F;
+      }
     }
   }
 }
@@ -145,7 +153,7 @@ int main(int argc, char **argv) {
 #if LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR < 9
   sys::PrintStackTraceOnErrorSignal();
 #else
-  sys::PrintStackTraceOnErrorSignal(StringRef());
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
 #endif
   PrettyStackTraceProgram X(argc, argv);
 
@@ -178,40 +186,40 @@ int main(int argc, char **argv) {
     doBasicInitialization(Module);
   }
 
-  // initialize nodefactory
-  GlobalCtx.nodeFactory.setStructAnalyzer(&GlobalCtx.structAnalyzer);
-  GlobalCtx.nodeFactory.setGobjMap(&GlobalCtx.Gobjs);
-  GlobalCtx.nodeFactory.setFuncMap(&GlobalCtx.Funcs);
+  // one more preprocessing to clear defined global variables and functions
+  for (auto &[name, gv] : GlobalCtx.Gobjs) { GlobalCtx.ExtGobjs.erase(name); }
+  for (auto &[name, f] : GlobalCtx.Funcs) { GlobalCtx.ExtFuncs.erase(name); }
 
-  populateNodeFactory(GlobalCtx);
+  // initialize nodefactory
+  //populateNodeFactory(GlobalCtx);
 
   // Main workflow
   CallGraphPass CGPass(&GlobalCtx);
   CGPass.run(GlobalCtx.Modules);
-  //CGPass.dumpFuncPtrs();
+  CGPass.dumpCallees();
 
-  if (DumpCallees)
-    CGPass.dumpCallees();
+//   if (DumpCallees)
+//     CGPass.dumpCallees();
 
-  if (DumpCallers)
-    CGPass.dumpCallers();
+//   if (DumpCallers)
+//     CGPass.dumpCallers();
 
-  if (DoSafeStack) {
-#ifdef DO_RANGE_ANALYSIS
-    RangePass RPass(&GlobalCtx);
-    RPass.run(GlobalCtx.Modules);
-#endif
+//   if (DoSafeStack) {
+// #ifdef DO_RANGE_ANALYSIS
+//     RangePass RPass(&GlobalCtx);
+//     RPass.run(GlobalCtx.Modules);
+// #endif
 
-    SafeStackPass SSPass(&GlobalCtx);
-    SSPass.run(GlobalCtx.Modules);
-    if (DumpStackStats)
-      SSPass.dumpStats();
-  }
+//     SafeStackPass SSPass(&GlobalCtx);
+//     SSPass.run(GlobalCtx.Modules);
+//     if (DumpStackStats)
+//       SSPass.dumpStats();
+//   }
 
-  if (DoLSS) {
-    LinuxSS LSS(&GlobalCtx);
-    LSS.run(GlobalCtx.Modules);
-  }
+//   if (DoLSS) {
+//     LinuxSS LSS(&GlobalCtx);
+//     LSS.run(GlobalCtx.Modules);
+//   }
 
   return 0;
 }

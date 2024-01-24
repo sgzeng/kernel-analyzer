@@ -1,76 +1,66 @@
 #ifndef ANDERSEN_PTSSET_H
 #define ANDERSEN_PTSSET_H
 
-#include <llvm/ADT/SparseBitVector.h>
+#include <vector>
 
-// We move the points-to set representation here into a separate class
-// The intention is to let us try out different internal implementation of this data-structure (e.g. vectors/bitvecs/sets, ref-counted/non-refcounted) easily
 class AndersPtsSet {
 private:
-    llvm::SparseBitVector<> bitvec;
+  std::vector<bool> _bitvec;
 
 public:
-    using iterator = llvm::SparseBitVector<>::iterator;
+  using iterator = std::vector<bool>::iterator;
+  using const_iterator = std::vector<bool>::const_iterator;
 
-    bool has(unsigned idx) {
-        return bitvec.test(idx);
-    }
+  AndersPtsSet() = default;
+  ~AndersPtsSet() = default;
 
-    bool insert(unsigned idx) {
-        return bitvec.test_and_set(idx);
-    }
+  const bool has(unsigned idx) const {
+    return _bitvec.size() < idx ? _bitvec.at(idx) : false;
+  }
 
-    bool insert(iterator b, iterator e) {
-        bool ret = false;
-        for (iterator i = b; i != e; ++i)
-            ret |= bitvec.test_and_set(*i);
-        return ret;
-    }
+  bool insert(unsigned idx) {
+    bool ret = _bitvec.size() < idx ? _bitvec.at(idx) : false;
+    _bitvec[idx] = true;
+    return ret;
+  }
 
-    void reset(unsigned idx) {
-        bitvec.reset(idx);
+  bool insert(iterator b, iterator e) {
+    bool ret = false;
+    for (iterator i = b; i != e; ++i) {
+      ret |= *i;
+      *i = true;
     }
+    return ret;
+  }
 
-    // Return true if *this is a superset of other
-    bool contains(const AndersPtsSet& other) const {
-        return bitvec.contains(other.bitvec);
-    }
+  void reset(unsigned idx) {
+    _bitvec[idx] = false;
+  }
 
-    // intersectWith: return true if *this and other share points-to elements
-    bool intersectWith(const AndersPtsSet& other) const {
-        return bitvec.intersects(other.bitvec);
-    }
+  void clear() {
+    _bitvec.clear();
+  }
 
-    // Return true if the ptsset changes
-    bool unionWith(AndersPtsSet& other) {
-        return bitvec |= other.bitvec;
-    }
+  size_t getSize() const {
+    return _bitvec.size();
+  }
 
-    void clear() {
-        bitvec.clear();
-    }
+  bool isEmpty() const {
+    return _bitvec.empty();  // Always prefer using this function to perform empty test
+  }
 
-    unsigned getSize() const {
-        return bitvec.count();  // NOT a constant time operation!
-    }
+  iterator begin() { return _bitvec.begin(); }
+  iterator end() { return _bitvec.end(); }
+  const_iterator begin() const { return _bitvec.begin(); }
+  const_iterator end() const { return _bitvec.end(); }
 
-    bool isEmpty() const {
-        return bitvec.empty();  // Always prefer using this function to perform empty test
-    }
+  const_iterator find_first() const {
+    return std::find(_bitvec.begin(), _bitvec.end(), true);
+  }
 
-    bool operator!=(const AndersPtsSet& RHS) const {
-        return bitvec != RHS.bitvec;
-    }
-
-    bool operator==(const AndersPtsSet& RHS) const {
-        return bitvec == RHS.bitvec;
-    }
-
-    iterator begin() const { return bitvec.begin(); }
-    iterator end() const { return bitvec.end(); }
-    llvm::iterator_range<iterator> elements() const {
-        return llvm::iterator_range<iterator>(begin(), end());
-    }
+  const_iterator find_next(const_iterator last) const {
+    return std::find(last + 1, _bitvec.end(), true);
+  }
 };
 
-#endif
+#endif //ANDERSEN_PTSSET_H
