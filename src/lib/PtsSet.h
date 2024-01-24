@@ -15,11 +15,17 @@ public:
   ~AndersPtsSet() = default;
 
   const bool has(unsigned idx) const {
-    return _bitvec.size() < idx ? _bitvec.at(idx) : false;
+    return idx < _bitvec.size() ? _bitvec[idx] : false;
   }
 
   bool insert(unsigned idx) {
-    bool ret = _bitvec.size() < idx ? _bitvec.at(idx) : false;
+    bool ret;
+    if (idx < _bitvec.size()) {
+      ret = _bitvec[idx];
+    } else {
+      _bitvec.resize(idx + 1);
+      ret = false;
+    }
     _bitvec[idx] = true;
     return ret;
   }
