@@ -25,28 +25,21 @@
 #include "PointTo.h"
 #include "StructAnalyzer.h"
 
-#define PT_LOG(stmt) KA_LOG(2, stmt)
+#define PT_LOG(stmt) KA_LOG(2, "Point2: " << stmt)
 
 using namespace llvm;
 
-static NodeIndex processStruct(const Value* v, const StructType* stType, const NodeIndex ptr,
+static NodeIndex processStruct(const Value* v, const StructType* stType,
                                AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
 
-#if 0
-  // FIXME: Hope opaque type does not happen. We linked whole kernel
-  // chunks into the single IR file, and thus there shouldn't be any forward
-  // declaration. If there's still, I don't think we can handle this case
-  // anyway? :( For now, simply turned off the assertion to test.
-
-  // We cannot handle opaque type
   if (stType->isOpaque()) {
     errs() << "Opaque struct type ";
     stType->print(errs());
     errs() << "\n";
-    return;
+
+    // we don't know how the struct looks like
+    return nodeFactory.createObjectNode(v);
   }
-  // assert(!stType->isOpaque() && "Opaque type not supported");
-#endif
 
   // Sanity check
   assert(stType != NULL && "structType is NULL");
@@ -65,30 +58,19 @@ static NodeIndex processStruct(const Value* v, const StructType* stType, const N
   // A better approach is to collect all constant GEP instructions and
   // construct variables only if they are used. We want to do the simplest thing first
   NodeIndex obj = nodeFactory.getObjectNodeFor(v);
-  if (obj == AndersNodeFactory::InvalidIndex) {
+  if (obj == AndersNodeFactory::InvalidIndex) { // avoid re-creating nodes
     obj = nodeFactory.createObjectNode(v, stInfo->isFieldUnion(0));
     for (unsigned i = 1; i < stSize; ++i)
-      NodeIndex structObj = nodeFactory.createObjectNode(obj, i, stInfo->isFieldUnion(i));
+      nodeFactory.createObjectNode(obj, i, stInfo->isFieldUnion(i));
   }
 
   return obj;
 }
 
-static void createNodeForPointerVal(const Value *V, const Type *T, const NodeIndex valNode,
-                                    AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
-
-  if (!T->isPointerTy())
-    return;
+static NodeIndex createNodeForAggregateVal(const Value *v, const Type *type,
+                                      AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
 
   assert(valNode != AndersNodeFactory::InvalidIndex);
-
-#if LLVM_VERSION_MAJOR > 13
-  // Assuming opaque pointer type
-    // We don't know what it points to, so we create an opaque object node
-  nodeFactory.createOpaqueObjectNode(V);
-#else
-
-  const Type *type = cast<PointerType>(T)->getElementType();
 
   // An array is considered a single variable of its type.
   while (const ArrayType *arrayType= dyn_cast<ArrayType>(type))
@@ -96,16 +78,18 @@ static void createNodeForPointerVal(const Value *V, const Type *T, const NodeInd
 
   // Now construct the memory object variable
   // It depends on whether the type of this variable is a struct or not
+  NodeIndex obj = AndersNodeFactory::InvalidIndex;
   if (const StructType *structType = dyn_cast<StructType>(type)) {
     // check if the struct is a union
     if (!structType->isLiteral() && structType->getStructName().startswith("union"))
-      nodeFactory.createObjectNode(V, true);
+      obj = nodeFactory.createObjectNode(v, true);
     else
-      processStruct(V, structType, valNode, nodeFactory, structAnalyzer);
+      obj = processStruct(v, structType, nodeFactory, structAnalyzer);
   } else {
-    nodeFactory.createObjectNode(V);
+    obj = nodeFactory.createObjectNode(v);
   }
-#endif
+
+  return obj;
 }
 
 static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory,
@@ -115,25 +99,24 @@ static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory,
     if (GV.isDeclaration())
       continue;
 
+    PT_LOG("Creating nodes for global " << GV.getName() << "\n");
+
     NodeIndex valNode = nodeFactory.createValueNode(&GV);
 
     const Constant *init = GV.getInitializer();
     if (init) {
       // defined global variables should have initializers
+      NodeIndex objNode = AndersNodeFactory::InvalidIndex;
       if (isa<ConstantAggregate>(init)) {
         // well, since the GV is of (opaque) pointer type, we have to rely on the type of initializer
         const Type *type = init->getType();
-
+        objNode = createNodeForAggregateVal(&GV, type, nodeFactory, structAnalyzer);
       } else {
-        NodeIndex objNode = nodeFactory.createObjectNode(&GV);
-        ptsGraph[valNode].insert(objNode);
+        objNode = nodeFactory.createObjectNode(&GV);
       }
-    // if (type->isPointerTy()) {
-    //   createNodeForPointerVal(&GV, type, valNode, nodeFactory, structAnalyzer);
-    // } else {
-    //   llvm::outs() << "GV:" << GV.getName() << ", not ptr type: " << *type << "\n";
+      ptsGraph[valNode].insert(objNode);
     } else {
-      llvm::errs() << "GV:" << GV.getName() << ", no initializer\n";
+      WARNING("GV:" << GV.getName() << ", no initializer\n");
     }
   }
 
@@ -141,21 +124,40 @@ static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory,
     if (F.isDeclaration() || F.isIntrinsic() || F.empty())
       continue;
 
+    PT_LOG("Creating nodes for function " << F.getName() << "\n");
+
     // Create return node
-    if (!F.getReturnType()->isVoidTy())
-      nodeFactory.createReturnNode(&F);
+    Type *retType = F.getReturnType();
+    if (!retType->isVoidTy()) {
+      // handle aggregate return type
+      if (retType->isArrayTy())
+        createNodeForAggregateVal(&F, retType, nodeFactory, structAnalyzer);
+      else if (retType->isStructTy())
+        processStruct(&F, cast<StructType>(retType), nodeFactory, structAnalyzer);
+      else
+        nodeFactory.createReturnNode(&F);
+    }
 
     // Create vararg node
     if (F.getFunctionType()->isVarArg())
       nodeFactory.createVarargNode(&F);
 
     // Add nodes for all formal arguments.
-    for (auto const &A : F.args())
-      NodeIndex valNode = nodeFactory.createValueNode(&A);
+    for (auto const &A : F.args()) {
+      // handle aggregate argument type
+      if (A.getType()->isArrayTy())
+        createNodeForAggregateVal(&A, A.getType(), nodeFactory, structAnalyzer);
+      else if (A.getType()->isStructTy())
+        processStruct(&A, cast<StructType>(A.getType()), nodeFactory, structAnalyzer);
+      else
+        nodeFactory.createValueNode(&A);
+    }
 
     // Create node for address taken function
     if (F.hasAddressTaken()) {
+      NodeIndex fVal = nodeFactory.createValueNode(&F);
       NodeIndex fObj = nodeFactory.createObjectNode(&F);
+      ptsGraph[fVal].insert(fObj);
     }
   }
 }
@@ -260,6 +262,8 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
     nodeFactory.setDataLayout(&(M->getDataLayout()));
     nodeFactory.setModule(M);
 
+    PT_LOG("Creating nodes for module " << M->getModuleIdentifier() << "\n");
+
     createNodeForGlobals(M, nodeFactory, structAnalyzer, ptsGraph);
 
     for (auto const& F: *M) {
@@ -276,6 +280,7 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
         nodeFactory.createValueNode(&*itr);
       }
 
+#if 0
       // Next, handle allocators
       for (auto itr = inst_begin(F), ite = inst_end(F); itr != ite; ++itr) {
         const Instruction *I = &*itr;
@@ -298,6 +303,7 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
           }
         }
       }
+#endif
     }
   }
 }
