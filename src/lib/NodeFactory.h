@@ -1,7 +1,7 @@
 #ifndef ANDERSEN_NODEFACTORY_H
 #define ANDERSEN_NODEFACTORY_H
 
-
+#include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/DataLayout.h>
@@ -38,17 +38,20 @@ private:
     AndersNodeType type;
     NodeIndex idx, mergeTarget;
     const llvm::Value* value;
+    const llvm::Type* allocationType;
     const NodeIndex offset;
     const bool isUnionObj;
     const bool isHeapNode;
     const bool isOpaqueObj;
     int storeFlag;
 
-    AndersNode(AndersNodeType t, unsigned i, const llvm::Value* v = NULL, const unsigned off = 0,
-               const bool uniono = false, const bool heap = false, const bool opaque = false,
-               int _storeFlag = 0)
-            : type(t), idx(i), mergeTarget(i), value(v), offset(off),
-              isUnionObj(uniono), isHeapNode(heap), isOpaqueObj(opaque), storeFlag(_storeFlag) {}
+    AndersNode(AndersNodeType t, unsigned i, const llvm::Value* v = NULL, const llvm::Type* ty = NULL,
+               const unsigned off = 0, const bool uniono = false, const bool heap = false,
+               const bool opaque = false, int _storeFlag = 0)
+            : type(t), idx(i), mergeTarget(i), value(v),
+              allocationType(ty == NULL ? (v == NULL ? NULL : v->getType()) : ty),
+              offset(off), isUnionObj(uniono), isHeapNode(heap), isOpaqueObj(opaque),
+              storeFlag(_storeFlag) {}
 
 public:
     NodeIndex getIndex() const { return idx; }
@@ -56,8 +59,10 @@ public:
     const NodeIndex getOffset() const { return offset; }
     const bool isUnion() const { return isUnionObj; }
     const bool isHeap() const { return isHeapNode; }
+    const bool isOpaque() const { return isOpaqueObj; }
     const int getStoreFlag() const { return storeFlag; }
-    
+    const llvm::Type* getAllocationType() const { return allocationType; }
+
     friend class AndersNodeFactory;
 };
 
@@ -133,6 +138,7 @@ public:
     // Factory methods
     NodeIndex createValueNode(const llvm::Value* val = NULL);
     NodeIndex createObjectNode(const llvm::Value* val = NULL,
+        const llvm::Type* ty = NULL,
         const bool uniono = false, const bool heap = false);
     NodeIndex createObjectNode(const NodeIndex base, const unsigned offset,
         const bool uniono = false, const bool heap = false);
@@ -161,8 +167,14 @@ public:
     const bool isUnionObject(NodeIndex i) const {
         return nodes.at(i).isUnion();
     }
-    const bool isHeapNode (NodeIndex i) const {
+    const bool isHeapObject (NodeIndex i) const {
         return nodes.at(i).isHeap();
+    }
+    const bool isOpaqueObject(NodeIndex i) const {
+        return nodes.at(i).isOpaque();
+    }
+    const llvm::Type* getObjectType(NodeIndex i) const {
+        return nodes.at(i).getAllocationType();
     }
     int getStored (NodeIndex i) const {
         return nodes.at(i).storeFlag;
@@ -206,6 +218,9 @@ public:
     NodeIndex getNullPtrNode() const { return NullPtrIndex; }
     NodeIndex getNullObjectNode() const { return NullObjectIndex; }
     NodeIndex getConstantIntNode() const { return ConstantIntIndex; }
+    static bool isSpecialNode(NodeIndex i) {
+        return i <= ConstantIntIndex;
+    }
 
     // Value getters
     const llvm::Value* getValueForNode(NodeIndex i) const {
