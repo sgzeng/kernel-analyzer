@@ -29,14 +29,18 @@ typedef std::unordered_map<llvm::Module*, llvm::StringRef> ModuleMap;
 typedef std::unordered_map<std::string, llvm::Function*> FuncMap;
 typedef std::unordered_map<std::string, llvm::GlobalVariable*> GObjMap;
 
+#if LLVM_VERSION_MAJOR > 10
+typedef llvm::SmallPtrSet<llvm::CallBase*, 8> CallInstSet;
+#else
 typedef llvm::SmallPtrSet<llvm::CallInst*, 8> CallInstSet;
-typedef llvm::SmallPtrSet<llvm::Function*, 8> FuncSet;
-typedef std::unordered_map<std::string, FuncSet> FuncPtrMap;
+#endif
+typedef llvm::SmallPtrSet<const llvm::Function*, 8> FuncSet;
+typedef std::unordered_map<NodeIndex, FuncSet> FuncPtrMap;
 
-typedef llvm::DenseMap<llvm::Function*, CallInstSet> CallerMap;
+typedef llvm::DenseMap<const llvm::Function*, CallInstSet> CallerMap;
 typedef llvm::DenseMap<llvm::CallInst*, FuncSet> CalleeMap;
 
-typedef std::unordered_map<NodeIndex, AndersPtsSet> PtsGraph;
+typedef std::unordered_map<std::size_t, AndersPtsSet> PtsGraph;
 typedef std::unordered_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;
 
 class GlobalContext {
@@ -69,16 +73,16 @@ public:
   // Map global object name to object definition
   GObjMap Gobjs;
 
-  // Map external global object name to declaration
+  // Map external global object name to a single declaration
   GObjMap ExtGobjs;
 
   // Map global function name to function defination
   FuncMap Funcs;
 
-  // Map external global function name to declaration
+  // Map external global function name to a single declaration
   FuncMap ExtFuncs;
 
-  // Map function pointers (IDs) to possible assignments
+  // Map function pointers to possible assignments
   FuncPtrMap FuncPtrs;
 
   // functions whose addresses are taken
