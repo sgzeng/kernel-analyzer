@@ -9,6 +9,7 @@
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Support/raw_ostream.h>
@@ -22,7 +23,7 @@
 #include "Common.h"
 #include "PointTo.h"
 
-#define AA_LOG(stmt) KA_LOG(2, stmt)
+#define AA_LOG(stmt) KA_LOG(2, "AA: " << stmt)
 
 using namespace llvm;
 
@@ -32,22 +33,22 @@ AndersNodeFactory::AndersNodeFactory() {
     // Note that we can't use std::vector::emplace_back() here because AndersNode's constructors are private hence std::vector cannot see it
 
     // Node #0 is always the universal ptr: the ptr that we don't know anything about.
-    nodes.push_back(AndersNode(AndersNode::VALUE_NODE, 0));
+    nodes.emplace_back(AndersNode(AndersNode::VALUE_NODE, 0));
     // Node #1 is always the universal obj: the obj that we don't know anything about.
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, 1));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, 1));
     // Node #2 always represents the null pointer.
-    nodes.push_back(AndersNode(AndersNode::VALUE_NODE, 2));
+    nodes.emplace_back(AndersNode(AndersNode::VALUE_NODE, 2));
     // Node #3 is the object that null pointer points to
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, 3));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, 3));
     // Node #4 is the constaint int obj
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, 4));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, 4));
     
     assert(nodes.size() == 5);
 }
 
 NodeIndex AndersNodeFactory::createValueNode(const Value* val) {
     unsigned nextIdx = nodes.size();
-    nodes.push_back(AndersNode(AndersNode::VALUE_NODE, nextIdx, val));
+    nodes.emplace_back(AndersNode(AndersNode::VALUE_NODE, nextIdx, val));
     if (val != nullptr) {
         assert(!valueNodeMap.count(val) && "Trying to insert two mappings to revValueNodeMap!");
         valueNodeMap[val] = nextIdx;
@@ -58,7 +59,7 @@ NodeIndex AndersNodeFactory::createValueNode(const Value* val) {
 
 NodeIndex AndersNodeFactory::createOpaqueObjectNode(const Value* val, const bool heap) {
     unsigned nextIdx = nodes.size();
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, 0, false, heap, true));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, NULL, 0, false, heap, true));
     if (val != nullptr) {
         if (objNodeMap.count(val))
             return objNodeMap[val];
@@ -68,9 +69,9 @@ NodeIndex AndersNodeFactory::createOpaqueObjectNode(const Value* val, const bool
     return nextIdx;
 }
 
-NodeIndex AndersNodeFactory::createObjectNode(const Value* val, const bool uniono, const bool heap) {
+NodeIndex AndersNodeFactory::createObjectNode(const Value* val, const Type* ty, const bool uniono, const bool heap) {
     unsigned nextIdx = nodes.size();
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, 0, uniono, heap));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, ty, 0, uniono, heap));
     if (val != nullptr) {
         if (objNodeMap.count(val))
             return objNodeMap[val];
@@ -86,14 +87,14 @@ NodeIndex AndersNodeFactory::createObjectNode(const NodeIndex base, const unsign
     unsigned nextIdx = nodes.size();
     assert(nextIdx == base + offset);
     const Value *val = getValueForNode(base);
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, offset, uniono, heap));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, val, NULL, offset, uniono, heap));
 
     return nextIdx;
 }
 
 NodeIndex AndersNodeFactory::createReturnNode(const llvm::Function* f) {
     unsigned nextIdx = nodes.size();
-    nodes.push_back(AndersNode(AndersNode::VALUE_NODE, nextIdx, f));
+    nodes.emplace_back(AndersNode(AndersNode::VALUE_NODE, nextIdx, f));
 
     assert(!returnMap.count(f) && "Trying to insert two mappings to returnMap!");
     returnMap[f] = nextIdx;
@@ -103,7 +104,7 @@ NodeIndex AndersNodeFactory::createReturnNode(const llvm::Function* f) {
 
 NodeIndex AndersNodeFactory::createVarargNode(const llvm::Function* f) {
     unsigned nextIdx = nodes.size();
-    nodes.push_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, f));
+    nodes.emplace_back(AndersNode(AndersNode::OBJ_NODE, nextIdx, f));
 
     assert(!varargMap.count(f) && "Trying to insert two mappings to varargMap!");
     varargMap[f] = nextIdx;
@@ -116,15 +117,19 @@ NodeIndex AndersNodeFactory::getValueNodeFor(const Value* val) {
         if (!isa<GlobalValue>(c))
             return getValueNodeForConstant(c);
 
-    if (const GlobalValue *globalVal = dyn_cast<GlobalValue>(val)) {
-        if (globalVal->isDeclaration()) {
-            auto itr = gobjMap->find(globalVal->getName().str());
-            if (!(itr == gobjMap->end()))
-                val = itr->second;
-            else
-                return getUniversalPtrNode();
+    if (const GlobalVariable *globalVar = dyn_cast<GlobalVariable>(val)) {
+        auto itr = gobjMap->find(globalVar->getName().str());
+        if (itr != gobjMap->end()) {
+            auto obj = itr->second;
+            if (obj->isDeclaration()) return getUniversalPtrNode();
+            else val = obj;
         }
     }
+    // else if (const Function *func = dyn_cast<Function>(val)) {
+    //     auto itr = funcMap->find(func->getName().str());
+    //     if (itr != funcMap->end())
+    //         val = itr->second;
+    // }
 
     auto itr = valueNodeMap.find(val);
     if (itr == valueNodeMap.end()) {
@@ -136,10 +141,10 @@ NodeIndex AndersNodeFactory::getValueNodeFor(const Value* val) {
 
 NodeIndex AndersNodeFactory::getValueNodeForConstant(const llvm::Constant* c) {
     if (!isa<PointerType>(c->getType()))
-        return getConstantIntNode();
+        return ConstantIntIndex;
 
     if (isa<ConstantPointerNull>(c) || isa<UndefValue>(c))
-        return getNullPtrNode();
+        return NullPtrIndex;
     else if (const GlobalValue* gv = dyn_cast<GlobalValue>(c))
         return getValueNodeFor(gv);
     else if (const ConstantExpr* ce = dyn_cast<ConstantExpr>(c)) {
@@ -149,12 +154,12 @@ NodeIndex AndersNodeFactory::getValueNodeForConstant(const llvm::Constant* c) {
                 NodeIndex baseNode = getValueNodeForConstant(ce->getOperand(0));
                 assert(baseNode != InvalidIndex && "missing base val node for gep");
 
-                if (baseNode == getNullObjectNode())
-                    return getNullPtrNode();
+                if (baseNode == NullObjectIndex)
+                    return NullPtrIndex;
 
-                if (baseNode == getUniversalObjNode()) {
+                if (baseNode == UniversalObjIndex) {
                     errs() << "GEP CE, universal obj " << *(ce->getOperand(0)) << "\n";
-                    return getUniversalPtrNode();
+                    return UniversalPtrIndex;
                 }
 
                 unsigned fieldNum = constGEPtoFieldNum(ce);
@@ -175,29 +180,29 @@ NodeIndex AndersNodeFactory::getValueNodeForConstant(const llvm::Constant* c) {
             case Instruction::BitCast:
             {
                 NodeIndex srcNode = getValueNodeFor(ce->getOperand(0));
-                if (srcNode == getNullObjectNode())
-                    return getNullPtrNode();
+                if (srcNode == NullObjectIndex)
+                    return NullPtrIndex;
 
-                if (srcNode == getUniversalObjNode()) {
+                if (srcNode == UniversalObjIndex) {
                     errs() << "GEP CE, universal obj " << *(ce->getOperand(0)) << "\n";
-                    return getUniversalPtrNode();
+                    return UniversalPtrIndex;
                 }
 
                 return srcNode;
             }
             case Instruction::IntToPtr:
                 // FIXME
-                return getNullPtrNode();
+                return NullPtrIndex;
             case Instruction::PtrToInt:
                 // FIXME
-                return getNullPtrNode();
+                return NullPtrIndex;
             default:
                 errs() << "Constant Expr not yet handled: " << *ce << "\n";
                 llvm_unreachable(0);
         }
     } else if (isa<BlockAddress>(c)) {
         // FIXME return NULL now
-        return getNullPtrNode();
+        return NullPtrIndex;
     }
 
     errs() << "Unknown constant pointer: " << *c << "\n";
@@ -206,23 +211,18 @@ NodeIndex AndersNodeFactory::getValueNodeForConstant(const llvm::Constant* c) {
 }
 
 NodeIndex AndersNodeFactory::getObjectNodeFor(const Value* val) {
-    if(const Constant* c = dyn_cast<const Constant>(val)){
+    if (const Constant* c = dyn_cast<const Constant>(val))
         if(!isa<GlobalValue>(c))
             return getObjectNodeForConstant(c);
 
-        const GlobalValue* gval = dyn_cast<GlobalValue>(c);
-        if (gval && gval->isDeclaration()) {
-            if (isa<GlobalVariable>(gval)) {
-                auto itr = gobjMap->find(gval->getName().str());
-                if(itr != gobjMap->end()) {
-                    val = itr->second;
-                }
-            } else if (isa<Function>(gval)) {
-                auto itr = funcMap->find(gval->getName().str());
-                if (itr != funcMap->end())
-                    val = itr->second;
-            }
-        }
+    if (const GlobalVariable *globalVar = dyn_cast<GlobalVariable>(val)) {
+        auto itr = gobjMap->find(globalVar->getName().str());
+        if (itr != gobjMap->end())
+            val = itr->second;
+    } else if (const Function *func = dyn_cast<Function>(val)) {
+        auto itr = funcMap->find(func->getName().str());
+        if (itr != funcMap->end())
+            val = itr->second;
     }
 
     auto itr = objNodeMap.find(val);
@@ -237,7 +237,7 @@ NodeIndex AndersNodeFactory::getObjectNodeForConstant(const llvm::Constant* c) {
         return getUniversalPtrNode();
 
     if (isa<ConstantPointerNull>(c))
-        return getNullObjectNode();
+        return NullObjectIndex;
     else if (const GlobalValue* gv = dyn_cast<GlobalValue>(c))
         return getObjectNodeFor(gv);
     else if (const ConstantExpr* ce = dyn_cast<ConstantExpr>(c)) {
@@ -246,17 +246,17 @@ NodeIndex AndersNodeFactory::getObjectNodeForConstant(const llvm::Constant* c) {
             {
                 NodeIndex baseNode = getObjectNodeForConstant(ce->getOperand(0));
                 assert(baseNode != InvalidIndex && "missing base obj node for gep");
-                if (baseNode == getNullObjectNode() || baseNode == getUniversalObjNode())
+                if (baseNode == NullObjectIndex || baseNode == UniversalObjIndex)
                     return baseNode;
 
                 return getOffsetObjectNode(baseNode, constGEPtoFieldNum(ce));
             }
             case Instruction::IntToPtr:
                 // FIXME
-                return getNullObjectNode();
+                return NullObjectIndex;
             case Instruction::PtrToInt:
                 // FIXME
-                return getNullObjectNode();
+                return NullObjectIndex;
             case Instruction::BitCast:
                 return getObjectNodeForConstant(ce->getOperand(0));
             default:
@@ -265,7 +265,7 @@ NodeIndex AndersNodeFactory::getObjectNodeForConstant(const llvm::Constant* c) {
         }
     } else if (isa<BlockAddress>(c)) {
         // FIXME return NULL now
-        return getNullObjectNode();
+        return NullObjectIndex;
     }
 
     errs() << "Unknown constant pointer: " << *c << "\n";
@@ -274,6 +274,9 @@ NodeIndex AndersNodeFactory::getObjectNodeForConstant(const llvm::Constant* c) {
 }
 
 NodeIndex AndersNodeFactory::getReturnNodeFor(const llvm::Function* f) {
+    auto rf = funcMap->find(f->getName().str());
+    if (rf != funcMap->end())
+        f = rf->second;
     auto itr = returnMap.find(f);
     if (itr == returnMap.end())
         return InvalidIndex;
@@ -290,14 +293,66 @@ NodeIndex AndersNodeFactory::getVarargNodeFor(const llvm::Function* f) {
 }
 
 unsigned AndersNodeFactory::constGEPtoFieldNum(const llvm::ConstantExpr* expr) const {
-    assert(expr->getOpcode() == Instruction::GetElementPtr && "constGEPtoVariable receives a non-gep expr!");
+    const GEPOperator* GEP = dyn_cast<GEPOperator>(expr);
+    assert(GEP != NULL && "constGEPtoFieldNum receives a non-gep value!");
 
-    int64_t offset = getGEPOffset(expr, dataLayout);
-#if LLVM_VERSION_MAJOR > 11
-    return offsetToFieldNum(getUnderlyingObject(expr, 0), offset, dataLayout, structAnalyzer, module);
-#else
-    return offsetToFieldNum(GetUnderlyingObject(expr, *dataLayout, 0), offset, dataLayout, structAnalyzer, module);
-#endif
+    // we assume the base pointer has already been recursively processed
+    // so there is no need to strip
+    unsigned ret = 0;
+    const Type* elemTy = GEP->getSourceElementType();
+    const Type* ptrTy = GEP->getPointerOperand()->getType();
+
+    auto idx = GEP->idx_begin();
+    if (ptrTy->isPointerTy()) {
+        ConstantInt *CI = dyn_cast<ConstantInt>(*idx);
+        assert(CI != NULL && "GEP ptr index is not a constant int!");
+        if (!CI->isZero()) {
+            if (elemTy->isIntegerTy(8)) {
+                AA_LOG("const gep expr with non-zero index into ptr: " << *expr << "\n");
+                // char*, offset = index
+                assert(GEP->getNumIndices() == 1 && "char* should have only one index!");
+                int64_t offset = CI->getSExtValue();
+                assert(offset >= 0 && "constexpr char* offset should be non-negative!");
+                auto ptr = dyn_cast<GlobalVariable>(GEP->getPointerOperand()->stripPointerCasts());
+                assert(ptr && "const gep expr ptr should be a global variable!");
+                auto itr = gobjMap->find(ptr->getName().str());
+                if (itr != gobjMap->end())
+                    ptr = itr->second;
+                auto itr2 = objNodeMap.find(ptr);
+                assert(itr2 != objNodeMap.end() && "const gep expr ptr should have a node!");
+                const Type *ATy = nodes[itr2->second].getAllocationType();
+                return offsetToFieldNum(ATy, offset, dataLayout, *structAnalyzer, module);
+            }
+            KA_ERR("Unhandled ConstantGEP expr: " << *expr << "\n");
+        } // else
+        idx++;
+    }
+
+    // fast path, without converting to byte offset then back to field number
+    while (idx != GEP->idx_end()) {
+        if (const ArrayType *arrayType = dyn_cast<ArrayType>(elemTy)) {
+            // array has been collapsed
+            elemTy = arrayType->getElementType();
+        } else if (const StructType *structType = dyn_cast<StructType>(elemTy)) {
+            ConstantInt *CI = dyn_cast<ConstantInt>(*idx);
+            assert(CI != NULL && "GEP struct index is not a constant int!");
+            unsigned index = CI->getZExtValue();
+
+            const StructInfo* stInfo = structAnalyzer->getStructInfo(structType, module);
+            assert(stInfo != NULL && "structInfoMap should have info for all structs!");
+
+            ret += stInfo->getOffset(index);
+
+            elemTy = structType->getElementType(index);
+        } else if (const VectorType *vectorType = dyn_cast<VectorType>(elemTy)) {
+            elemTy = vectorType->getElementType();
+        } else {
+            assert(false && "Unhandled GEP element type!");
+        }
+        idx++;
+    }
+
+    return ret;
 }
 
 void AndersNodeFactory::mergeNode(NodeIndex n0, NodeIndex n1) {
@@ -456,19 +511,19 @@ void AndersNodeFactory::dumpNodePtrSetInfo(
         ptrTotal += size;
         ptrNumber++;
 
-        AA_LOG("\tptrs> ");
-        for (auto v: ptsItr->second)
-            AA_LOG(v << " ");
-        AA_LOG("\n");
+        // AA_LOG("\tptrs> ");
+        // for (auto v: ptsItr->second)
+        //     AA_LOG(v << " ");
+        // AA_LOG("\n");
 
-        if (dumpDep) {
-            // Since we may not dump all the nodes
-            // this is necessary for dumping the dependents
-            for (auto v: ptsItr->second) {
-                if (!dumped.count(v))
-                    dumpNode(v, ptsGraph, dumped, dumpDep);
-            }
-        }
+        // if (dumpDep) {
+        //     // Since we may not dump all the nodes
+        //     // this is necessary for dumping the dependents
+        //     for (auto v: ptsItr->second) {
+        //         if (!dumped.count(v))
+        //             dumpNode(v, ptsGraph, dumped, dumpDep);
+        //     }
+        // }
     }
 }
 
