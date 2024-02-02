@@ -8,38 +8,42 @@ private:
   std::vector<bool> _bitvec;
 
 public:
-  using iterator = std::vector<bool>::iterator;
-  using const_iterator = std::vector<bool>::const_iterator;
 
   AndersPtsSet() = default;
+  AndersPtsSet(const AndersPtsSet &S) : _bitvec(S._bitvec) {}
   ~AndersPtsSet() = default;
 
-  const bool has(unsigned idx) const {
+  const bool has(std::size_t idx) const {
     return idx < _bitvec.size() ? _bitvec[idx] : false;
   }
 
-  bool insert(unsigned idx) {
+  bool insert(std::size_t idx) {
     bool ret;
     if (idx < _bitvec.size()) {
-      ret = _bitvec[idx];
+      ret = !_bitvec[idx];
     } else {
       _bitvec.resize(idx + 1);
-      ret = false;
+      ret = true;
     }
     _bitvec[idx] = true;
     return ret;
   }
 
-  bool insert(iterator b, iterator e) {
-    bool ret = false;
-    for (iterator i = b; i != e; ++i) {
-      ret |= *i;
-      *i = true;
+  std::size_t insert(AndersPtsSet &S) {
+    std::size_t ret = 0;
+    if (S.getSize() > _bitvec.size()) {
+      _bitvec.resize(S.getSize());
+    }
+    for (std::size_t i = 0; i < S.getSize(); ++i) {
+      if (S._bitvec[i] && !_bitvec[i]) {
+        ret += 1;
+        _bitvec[i] = true;
+      }
     }
     return ret;
   }
 
-  void reset(unsigned idx) {
+  void reset(std::size_t idx) {
     _bitvec[idx] = false;
   }
 
@@ -47,7 +51,7 @@ public:
     _bitvec.clear();
   }
 
-  size_t getSize() const {
+  std::size_t getSize() const {
     return _bitvec.size();
   }
 
@@ -55,17 +59,17 @@ public:
     return _bitvec.empty();  // Always prefer using this function to perform empty test
   }
 
-  iterator begin() { return _bitvec.begin(); }
-  iterator end() { return _bitvec.end(); }
-  const_iterator begin() const { return _bitvec.begin(); }
-  const_iterator end() const { return _bitvec.end(); }
+  // iterator begin() { return _bitvec.begin(); }
+  // iterator end() { return _bitvec.end(); }
+  // const_iterator begin() const { return _bitvec.begin(); }
+  // const_iterator end() const { return _bitvec.end(); }
 
-  const_iterator find_first() const {
-    return std::find(_bitvec.begin(), _bitvec.end(), true);
+  std::size_t find_first() const {
+    return std::find(_bitvec.begin(), _bitvec.end(), true) - _bitvec.begin();
   }
 
-  const_iterator find_next(const_iterator last) const {
-    return std::find(last + 1, _bitvec.end(), true);
+  std::size_t find_next(std::size_t last) const {
+    return std::find(_bitvec.begin() + last + 1, _bitvec.end(), true) - _bitvec.begin();
   }
 };
 
