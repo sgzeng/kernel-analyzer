@@ -131,6 +131,7 @@ public:
     void setModule(llvm::Module* m) { module = m; }
     llvm::Module* getModule() const { return module; }
     void setDataLayout(const llvm::DataLayout* d) { dataLayout = d; }
+    const llvm::DataLayout* getDataLayout() const { return dataLayout; }
     void setStructAnalyzer(StructAnalyzer* s) { structAnalyzer = s; }
     void setGobjMap(const GObjMap* m) { gobjMap = m; }
     void setFuncMap(const FuncMap* m) { funcMap = m; }

@@ -6,6 +6,7 @@
  * For licensing details see LICENSE
  */
 
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/InstIterator.h>
@@ -17,9 +18,6 @@
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/Instructions.h>
 
-
-#include <deque>
-
 #include "Common.h"
 #include "Annotation.h"
 #include "PointTo.h"
@@ -29,8 +27,9 @@
 
 using namespace llvm;
 
-static NodeIndex processStruct(const Value* v, const StructType* stType,
-                               AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
+static NodeIndex processStruct(const Value* v, const StructType* stType, bool isHeap,
+                               AndersNodeFactory &nodeFactory,
+                               StructAnalyzer &structAnalyzer) {
 
   if (stType->isOpaque()) {
     errs() << "Opaque struct type ";
@@ -38,7 +37,7 @@ static NodeIndex processStruct(const Value* v, const StructType* stType,
     errs() << "\n";
 
     // we don't know how the struct looks like
-    return nodeFactory.createObjectNode(v);
+    return nodeFactory.createObjectNode(v, stType, false, isHeap);
   }
 
   // Sanity check
@@ -59,18 +58,17 @@ static NodeIndex processStruct(const Value* v, const StructType* stType,
   // construct variables only if they are used. We want to do the simplest thing first
   NodeIndex obj = nodeFactory.getObjectNodeFor(v);
   if (obj == AndersNodeFactory::InvalidIndex) { // avoid re-creating nodes
-    obj = nodeFactory.createObjectNode(v, stInfo->isFieldUnion(0));
+    obj = nodeFactory.createObjectNode(v, stType, stInfo->isFieldUnion(0), isHeap);
     for (unsigned i = 1; i < stSize; ++i)
-      nodeFactory.createObjectNode(obj, i, stInfo->isFieldUnion(i));
+      nodeFactory.createObjectNode(obj, i, stInfo->isFieldUnion(i), isHeap);
   }
 
   return obj;
 }
 
-static NodeIndex createNodeForAggregateVal(const Value *v, const Type *type,
-                                      AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
-
-  assert(valNode != AndersNodeFactory::InvalidIndex);
+NodeIndex createNodeForTypedVal(const Value *v, const Type *type, bool isHeap,
+                                AndersNodeFactory &nodeFactory,
+                                StructAnalyzer &structAnalyzer) {
 
   // An array is considered a single variable of its type.
   while (const ArrayType *arrayType= dyn_cast<ArrayType>(type))
@@ -82,60 +80,122 @@ static NodeIndex createNodeForAggregateVal(const Value *v, const Type *type,
   if (const StructType *structType = dyn_cast<StructType>(type)) {
     // check if the struct is a union
     if (!structType->isLiteral() && structType->getStructName().startswith("union"))
-      obj = nodeFactory.createObjectNode(v, true);
+      obj = nodeFactory.createObjectNode(v, type, true, isHeap);
     else
-      obj = processStruct(v, structType, nodeFactory, structAnalyzer);
+      obj = processStruct(v, structType, isHeap, nodeFactory, structAnalyzer);
   } else {
-    obj = nodeFactory.createObjectNode(v);
+    obj = nodeFactory.createObjectNode(v, type, false, isHeap);
   }
 
   return obj;
 }
 
+static inline const Type* getBetterType(const Type* oldType, const Type* newType) {
+  if (oldType == NULL)
+    return newType;
+  if (oldType == newType)
+    return newType;
+  // collapse array type
+  while (const ArrayType *arrayType = dyn_cast<ArrayType>(oldType))
+    oldType = arrayType->getElementType();
+  while (const ArrayType *arrayType = dyn_cast<ArrayType>(newType))
+    newType = arrayType->getElementType();
+
+  if (newType->isSingleValueType()) {
+    if (oldType->isSingleValueType())
+      return oldType->getPrimitiveSizeInBits() < newType->getPrimitiveSizeInBits() ? newType : oldType;
+    else return oldType; // oldType is aggregate type,  prefer
+  } else {
+    if (oldType->isSingleValueType())
+      return newType; // newType is aggregate type, prefer
+    // else both struct, prefer non-literal struct
+    const StructType *oldST = dyn_cast<StructType>(oldType);
+    const StructType *newST = dyn_cast<StructType>(newType);
+    assert(oldST != NULL && newST != NULL && "Non-struct type should have been handled");
+    if (oldST->isLiteral() && !newST->isLiteral())
+      return newType;
+    else return oldType;
+  }
+
+  llvm_unreachable("Unhandled type comparison");
+}
+
+static const Type* getUsedType(const Value* GV, const Type* initType) {
+  SmallVector<const Value*, 4> worklist(GV->user_begin(), GV->user_end());
+  SmallPtrSet<const Value*, 4> visited;
+  const Type* bestTy = initType;
+  while (!worklist.empty()) {
+    const Value *V = worklist.pop_back_val();
+    if (!visited.insert(V).second)
+      continue;
+    if (const LoadInst *LI = dyn_cast<LoadInst>(V)) {
+      bestTy = getBetterType(bestTy, LI->getType());
+    } else if (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(V)) {
+      bestTy = getBetterType(bestTy, GEP->getSourceElementType());
+    } else if (const BitCastInst *BC = dyn_cast<BitCastInst>(V)) {
+      worklist.insert(worklist.end(), BC->user_begin(), BC->user_end());
+    } else if (const ConstantExpr *CE = dyn_cast<ConstantExpr>(V)) {
+      if (CE->getOpcode() == Instruction::GetElementPtr) {
+        auto GEP = cast<GEPOperator>(CE);
+        bestTy = getBetterType(bestTy, GEP->getSourceElementType());
+      } else if (CE->getOpcode() == Instruction::BitCast) {
+        worklist.insert(worklist.end(), CE->user_begin(), CE->user_end());
+      }
+    } else if (isa<ConstantAggregate>(V)) {
+      // ignore initializer
+    } else {
+      WARNING("Unhandled user of value " << GV->getName() << ": " << *V << "\n");
+    }
+  }
+
+  return bestTy;
+}
+
 static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory,
-                                 StructAnalyzer &structAnalyzer, PtsGraph &ptsGraph) {
+                                 StructAnalyzer &structAnalyzer,
+                                 PtsGraph &ptsGraph) {
 
   for (auto const& GV: M->globals()) {
     if (GV.isDeclaration())
       continue;
 
-    PT_LOG("Creating nodes for global " << GV.getName() << "\n");
-
     NodeIndex valNode = nodeFactory.createValueNode(&GV);
-
     const Constant *init = GV.getInitializer();
     if (init) {
       // defined global variables should have initializers
-      NodeIndex objNode = AndersNodeFactory::InvalidIndex;
-      if (isa<ConstantAggregate>(init)) {
-        // well, since the GV is of (opaque) pointer type, we have to rely on the type of initializer
-        const Type *type = init->getType();
-        objNode = createNodeForAggregateVal(&GV, type, nodeFactory, structAnalyzer);
-      } else {
-        objNode = nodeFactory.createObjectNode(&GV);
+      const Type *type = init->getType();
+      // XXX: the type of the initializer could be tricky
+      if (const StructType *ST = dyn_cast<StructType>(type)) {
+        if (ST->isLiteral()) {
+          // if the initializer is a literal struct, try to see if the global
+          // has been used in a more friendly type
+          const Type *usedType = getUsedType(&GV, type);
+          if (usedType != type) {
+            PT_LOG("Using used type " << *usedType << " instead of init type " << *type << " for global " << GV.getName() << "\n");
+            type = usedType;
+          }
+        }
       }
+      NodeIndex objNode = createNodeForTypedVal(&GV, type, false, nodeFactory, structAnalyzer);
       ptsGraph[valNode].insert(objNode);
+      PT_LOG("Created node " << objNode << " for global " << GV.getName() << "\n");
     } else {
       WARNING("GV:" << GV.getName() << ", no initializer\n");
     }
   }
 
   for (auto const& F: *M) {
-    if (F.isDeclaration() || F.isIntrinsic() || F.empty())
+    if (F.isDeclaration() || F.isIntrinsic() || F.empty()) {
       continue;
-
-    PT_LOG("Creating nodes for function " << F.getName() << "\n");
+    }
 
     // Create return node
     Type *retType = F.getReturnType();
     if (!retType->isVoidTy()) {
-      // handle aggregate return type
-      if (retType->isArrayTy())
-        createNodeForAggregateVal(&F, retType, nodeFactory, structAnalyzer);
-      else if (retType->isStructTy())
-        processStruct(&F, cast<StructType>(retType), nodeFactory, structAnalyzer);
-      else
-        nodeFactory.createReturnNode(&F);
+      // FIXME: handle potential aggregate return type
+      // createNodeForTypedVal(&F, retType, false, nodeFactory, structAnalyzer);
+      assert(!retType->isAggregateType() && "Aggregate return type not supported");
+      nodeFactory.createReturnNode(&F);
     }
 
     // Create vararg node
@@ -144,35 +204,24 @@ static void createNodeForGlobals(Module *M, AndersNodeFactory &nodeFactory,
 
     // Add nodes for all formal arguments.
     for (auto const &A : F.args()) {
-      // handle aggregate argument type
-      if (A.getType()->isArrayTy())
-        createNodeForAggregateVal(&A, A.getType(), nodeFactory, structAnalyzer);
-      else if (A.getType()->isStructTy())
-        processStruct(&A, cast<StructType>(A.getType()), nodeFactory, structAnalyzer);
-      else
-        nodeFactory.createValueNode(&A);
+      // FIXME: handle potential aggregate argument type
+      // createNodeForTypedVal(&A, A.getType(), false, nodeFactory, structAnalyzer);
+      assert(!A.getType()->isAggregateType() && "Aggregate argument type not supported");
+      nodeFactory.createValueNode(&A);
     }
 
-    // Create node for address taken function
-    if (F.hasAddressTaken()) {
-      NodeIndex fVal = nodeFactory.createValueNode(&F);
-      NodeIndex fObj = nodeFactory.createObjectNode(&F);
-      ptsGraph[fVal].insert(fObj);
-    }
+    NodeIndex fobj = nodeFactory.createObjectNode(&F);
+    PT_LOG("Created node " << fobj << " for function " << F.getName() << "\n");
   }
 }
 
-static void createNodeForHeapObject(const Instruction *I, int SizeArg, int FlagArg,
+static NodeIndex createNodeForHeapObject(const Instruction *I, int SizeArg, int FlagArg,
                                     AndersNodeFactory &nodeFactory, StructAnalyzer &structAnalyzer) {
 
-  const PointerType* pType = dyn_cast<PointerType>(I->getType());
-  assert(pType != NULL && "unhandled malloc function");
-
-#if LLVM_VERSION_MAJOR > 13
+#if 1 //LLVM_VERSION_MAJOR > 13
   // Assuming opaque pointer type
   // We don't know what it points to, so we create an opaque object node
-  nodeFactory.createOpaqueObjectNode(I, true);
-  return;
+  return nodeFactory.createOpaqueObjectNode(I, true);
 #else
   const Type* elemType = pType->getElementType();
 
@@ -237,6 +286,131 @@ static void createNodeForHeapObject(const Instruction *I, int SizeArg, int FlagA
 #endif
 }
 
+static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
+                               AndersNodeFactory &nodeFactory,
+                               PtsGraph &ptsGraph) {
+
+  assert(obj != AndersNodeFactory::InvalidIndex && "Invalid node index for global object");
+
+  // collapse array type
+  while (const ArrayType *arrayType = dyn_cast<ArrayType>(objTy))
+    objTy = arrayType->getElementType();
+
+  // look for global values in the initializer
+  if (ConstantArray *CA = dyn_cast<ConstantArray>(init)) {
+    // array, always collapse, process element by element
+    for (unsigned i = 0; i != CA->getNumOperands(); ++i)
+      processInitializer(obj, objTy, CA->getOperand(i), nodeFactory, ptsGraph);
+  } else if (ConstantStruct *CS = dyn_cast<ConstantStruct>(init)) {
+    // handle struct type specially, could be tricky because of type mismatch
+    // GV could be allocated using the used type (see createNodeForGlobals)
+    const StructType *CSTy = CS->getType();
+    if (CSTy != objTy) {
+      // type mismatch
+      PT_LOG("Initializer type mismatch for " << *CS << " vs " << *objTy << "\n");
+      assert(CSTy->isLiteral() && "Non-literal struct type mismatch");
+      const StructType *STy = dyn_cast<StructType>(objTy);
+      auto dataLayout = nodeFactory.getDataLayout();
+      auto objSize = dataLayout->getTypeAllocSize(const_cast<Type*>(objTy));
+      for (unsigned i = 0, j = 0; i != CSTy->getNumElements(); ++i) {
+        // XXX try a heuristic
+        Type *elemTy = CSTy->getElementType(i);
+        auto elemSize = dataLayout->getTypeAllocSize(elemTy);
+        if (elemSize % objSize == 0) {
+          // element size is a multiple of object size, use base type
+          processInitializer(obj, objTy, CS->getOperand(i), nodeFactory, ptsGraph);
+        } else {
+          // we could be looking at a sub-field
+          assert(STy != NULL && "Struct initializer for non-struct type");
+          NodeIndex field = nodeFactory.getOffsetObjectNode(obj, j);
+          assert(field != AndersNodeFactory::InvalidIndex && "Invalid node index for field");
+          processInitializer(field, STy->getElementType(j), CS->getOperand(i), nodeFactory, ptsGraph);
+          // advance to next field if not array type
+          if (!elemTy->isArrayTy()) ++j;
+        }
+      }
+    } else {
+      // type match, process field by field
+      for (unsigned i = 0; i != CSTy->getNumElements(); ++i) {
+        const Type* elemTy = CSTy->getElementType(i);
+        // collapse array type before processing
+        while (const ArrayType *arrayType = dyn_cast<ArrayType>(elemTy))
+          elemTy = arrayType->getElementType();
+        NodeIndex field = nodeFactory.getOffsetObjectNode(obj, i);
+        assert(field != AndersNodeFactory::InvalidIndex && "Invalid node index for field");
+        processInitializer(field, elemTy, CS->getOperand(i), nodeFactory, ptsGraph);
+      }
+    }
+  } else if (ConstantVector *CV = dyn_cast<ConstantVector>(init)) {
+    // FIXME: handle vector type
+    // for (unsigned i = 0; i != CV->getNumOperands(); ++i)
+    //   processInitializer(obj, objTy, CV->getOperand(i), nodeFactory, ptsGraph);
+    WARNING("Unhandled vector initializer: " << *init << "\n");
+  } else if (ConstantAggregateZero *CAZ = dyn_cast<ConstantAggregateZero>(init)) {
+    // zero initializer
+    Type *Ty = CAZ->getType();
+    if (isa<ArrayType>(Ty) || isa<VectorType>(Ty)) {
+      // array or vector, process element only once
+      processInitializer(obj, objTy, CAZ->getSequentialElement(), nodeFactory, ptsGraph);
+    } else {
+      StructType *CSTy = dyn_cast<StructType>(Ty);
+      assert(CSTy != NULL && "Invalid zero initializer type");
+      // assert(!CSTy->isLiteral() && "Zero initializer cannot be literal?");
+      assert(CSTy == objTy && "Zero initializer type mismatch");
+      // struct, process field by field
+      for (unsigned i = 0; i != CSTy->getNumElements(); ++i) {
+        Type *elemTy = CSTy->getElementType(i);
+        Constant *elem = CAZ->getStructElement(i);
+        // collapse array type before processing
+        while (const ArrayType *arrayType = dyn_cast<ArrayType>(elemTy)) {
+          elemTy = arrayType->getElementType();
+          elem = cast<ConstantAggregateZero>(elem)->getSequentialElement();
+        }
+        NodeIndex field = nodeFactory.getOffsetObjectNode(obj, i);
+        processInitializer(field, elemTy, elem, nodeFactory, ptsGraph);
+      }
+    }
+  } else {
+    // non-aggregate initializer
+    assert(objTy->isSingleValueType() && "Single value initializer for non single value type");
+    if (isa<ConstantPointerNull>(init)) {
+      ptsGraph[obj].insert(nodeFactory.getNullObjectNode());
+    } else if (isa<GlobalVariable>(init)) {
+      NodeIndex objNode = nodeFactory.getObjectNodeFor(init); // already handles name to def mapping
+      assert(objNode != AndersNodeFactory::InvalidIndex && "Invalid node index for global variable");
+      ptsGraph[obj].insert(objNode);
+    } else if (isa<Function>(init)) {
+      NodeIndex objNode = nodeFactory.getObjectNodeFor(init); // already handles name to def mapping
+      assert(objNode != AndersNodeFactory::InvalidIndex && "Invalid node index for function");
+      ptsGraph[obj].insert(objNode);
+      // // collect function pointers
+      // auto FP = cast<Function>(nodeFactory.getValueForNode(objNode));
+      // Ctx.FuncPtrs[obj].insert(FP);
+    } else if (isa<ConstantExpr>(init)) {
+      ConstantExpr *CE = cast<ConstantExpr>(init);
+      switch (CE->getOpcode()) {
+        case Instruction::GetElementPtr: {
+          NodeIndex field = nodeFactory.getObjectNodeForConstant(CE);
+          assert(!AndersNodeFactory::isSpecialNode(field) && "Invalid node index for field");
+          ptsGraph[obj].insert(field);
+          break;
+        }
+        case Instruction::BitCast: {
+          // BitCast, process the operand
+          processInitializer(obj, objTy, CE->getOperand(0), nodeFactory, ptsGraph);
+          break;
+        }
+        // case Instruction::IntToPtr: {
+        //   // IntToPtr, do nothing
+        //   break;
+        // }
+        default:
+          WARNING("Unhandled constant expression initializer: " << *init << "\n");
+      }
+    }
+  }
+}
+
 void populateNodeFactory(GlobalContext &GlobalCtx) {
 
   AndersNodeFactory &nodeFactory = GlobalCtx.nodeFactory;
@@ -255,7 +429,7 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
   // null ptr points to null obj
   ptsGraph[nodeFactory.getNullPtrNode()].insert(nodeFactory.getNullObjectNode());
   // null obj points to nothing, so empty
-  ptsGraph[nodeFactory.getNullObjectNode()];
+  ptsGraph[nodeFactory.getNullObjectNode()].clear();
 
   for (auto i = GlobalCtx.Modules.begin(), e = GlobalCtx.Modules.end(); i != e; ++i) {
     Module *M = i->first;
@@ -264,6 +438,7 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
 
     PT_LOG("Creating nodes for module " << M->getModuleIdentifier() << "\n");
 
+    // Create obj nodes for global variables and functions
     createNodeForGlobals(M, nodeFactory, structAnalyzer, ptsGraph);
 
     for (auto const& F: *M) {
@@ -275,35 +450,56 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
         continue;
     
       // Scan the function body
-      // First, create a value node for each instruction
       for (auto itr = inst_begin(&F), ite = inst_end(&F); itr != ite; ++itr) {
-        nodeFactory.createValueNode(&*itr);
-      }
-
-#if 0
-      // Next, handle allocators
-      for (auto itr = inst_begin(F), ite = inst_end(F); itr != ite; ++itr) {
         const Instruction *I = &*itr;
+        // First, create a value node for each instruction
+        NodeIndex valNode = nodeFactory.createValueNode(I);
+
+        // Next, handle allocators
         switch (I->getOpcode()) {
           case Instruction::Alloca: {
-            NodeIndex valNode = nodeFactory.getValueNodeFor(I);
-            assert (valNode != AndersNodeFactory::InvalidIndex && "Failed to find alloca value node");
-            assert (I->getType()->isPointerTy());
-            createNodeForPointerVal(I, I->getType(), valNode, nodeFactory, structAnalyzer);
+            Type *Ty = cast<AllocaInst>(I)->getAllocatedType();
+            NodeIndex obj = createNodeForTypedVal(I, Ty, false, nodeFactory, structAnalyzer);
+            ptsGraph[valNode].insert(obj);
             break;
           }
           case Instruction::Call: {
             const CallInst *CI = dyn_cast<CallInst>(I);
             if (Function *CF = CI->getCalledFunction()) {
               if (isAllocFn(CF->getName(), &size, &flag)) {
-                createNodeForHeapObject(CI, size, flag, nodeFactory, structAnalyzer);
+                NodeIndex obj = createNodeForHeapObject(CI, size, flag, nodeFactory, structAnalyzer);
+                ptsGraph[valNode].insert(obj);
               }
             }
             break;
           }
         }
       }
-#endif
+    }
+  }
+
+  // Create object nodes for external global variables and functions
+  for (auto const &itr: GlobalCtx.ExtGobjs) {
+    nodeFactory.createObjectNode(itr.second);
+  }
+  for (auto const &itr: GlobalCtx.ExtFuncs) {
+    nodeFactory.createObjectNode(itr.second);
+  }
+
+  // iterate again to process global initializers
+  // collecting point2 information for global values
+  for (auto i = GlobalCtx.Modules.begin(), e = GlobalCtx.Modules.end(); i != e; ++i) {
+    Module *M = i->first;
+    nodeFactory.setDataLayout(&(M->getDataLayout()));
+    nodeFactory.setModule(M);
+
+    for (auto &GV: M->globals()) {
+      if (GV.hasInitializer()) {
+        NodeIndex obj = nodeFactory.getObjectNodeFor(&GV);
+        const Type *Ty = nodeFactory.getObjectType(obj);
+        //PT_LOG("Processing initializer for global " << GV.getName() << " type " << *Ty << " with " << *GV.getInitializer() << "\n");
+        processInitializer(obj, Ty, GV.getInitializer(), nodeFactory, ptsGraph);
+      }
     }
   }
 }
@@ -313,7 +509,7 @@ int64_t getGEPOffset(const Value* value, const DataLayout* dataLayout) {
   //errs()<<"Inside getGEPOffset:\n";
   const GEPOperator* gepValue = dyn_cast<GEPOperator>(value);
   assert(gepValue != NULL && "getGEPOffset receives a non-gep value!");
-  assert(dataLayout != nullptr && "getGEPOffset receives a NULL dataLayout!");
+  assert(dataLayout != NULL && "getGEPOffset receives a NULL dataLayout!");
 
   int64_t offset = 0;
   const Value* baseValue = gepValue->getPointerOperand()->stripPointerCasts();
@@ -338,24 +534,17 @@ int64_t getGEPOffset(const Value* value, const DataLayout* dataLayout) {
   return offset;
 }
 
-unsigned offsetToFieldNum(const Value* ptr, int64_t offset, const DataLayout* dataLayout,
-                          const StructAnalyzer *structAnalyzer, Module* module) {
+unsigned offsetToFieldNum(const Type* type, int64_t off, const DataLayout* dataLayout,
+                          StructAnalyzer &structAnalyzer, Module* module) {
 
-  assert(ptr->getType()->isPointerTy() && "Passing a non-ptr to offsetToFieldNum!");
   assert(dataLayout != nullptr && "DataLayout is NULL when calling offsetToFieldNum!");
-  if (offset < 0)
+  if (off < 0)
     return 0;
 
-#if LLVM_VERSION_MAJOR > 13
-  return 0;
-#else
-  Type* trueElemType = cast<PointerType>(ptr->getType())->getElementType();
-  //errs()<<"Inside offset to field num:\n";
-  //errs()<<"1trueElemType: "<<*trueElemType<<"\n";
-
   unsigned ret = 0;
-  if (trueElemType->isStructTy()) {
-    StructType* stType = cast<StructType>(trueElemType);
+  Type* elemType = const_cast<Type*>(type);
+  if (elemType->isStructTy()) {
+    StructType* stType = cast<StructType>(elemType);
     if (!stType->isLiteral() && stType->getName().startswith("union"))
       return ret;
     if (!stType->isLiteral() && stType->getName().startswith("union"))
@@ -364,24 +553,27 @@ unsigned offsetToFieldNum(const Value* ptr, int64_t offset, const DataLayout* da
       return ret;
   }
 
+  auto offset = off;
   while (offset > 0) {
     //errs()<<"offset: "<<offset<<"\n";
     // Collapse array type
-    while(const ArrayType *arrayType= dyn_cast<ArrayType>(trueElemType))
-      trueElemType = arrayType->getElementType();
+    while(const ArrayType *arrayType= dyn_cast<ArrayType>(elemType))
+      elemType = arrayType->getElementType();
 
-    if (trueElemType->isStructTy()) {
-      StructType* stType = cast<StructType>(trueElemType);
+    if (elemType->isStructTy()) {
+      StructType* stType = cast<StructType>(elemType);
 
-      const StructInfo* stInfo = structAnalyzer->getStructInfo(stType, module);
+      const StructInfo* stInfo = structAnalyzer.getStructInfo(stType, module);
       assert(stInfo != NULL && "structInfoMap should have info for all structs!");
       stType = const_cast<StructType*>(stInfo->getRealType());
 
       const StructLayout* stLayout = stInfo->getDataLayout()->getStructLayout(stType);
       uint64_t allocSize = stInfo->getDataLayout()->getTypeAllocSize(stType);
+      PT_LOG("allocSize = " << allocSize << ", offset = " << off << "\n");
       if (!allocSize)
         return 0;
 
+      // since we have collapsed arrays, we want the offset into individual element
       offset %= allocSize;
       unsigned idx = stLayout->getElementContainingOffset(offset);
       if (!stType->isLiteral() && stType->getName().startswith("union")) {
@@ -396,10 +588,10 @@ unsigned offsetToFieldNum(const Value* ptr, int64_t offset, const DataLayout* da
       } else {
         offset -= stLayout->getElementOffset(idx);
       }
-      trueElemType = stType->getElementType(idx);
+      elemType = stType->getElementType(idx);
     } else {
-      //errs() << "trueElemType: " << *trueElemType<< "\n";
-      offset %= dataLayout->getTypeAllocSize(trueElemType);
+      //errs() << "elemType: " << *elemType<< "\n";
+      offset %= dataLayout->getTypeAllocSize(elemType);
       if (offset != 0) {
         errs() << "Warning: GEP into the middle of a field. This usually occurs when union is used. Since partial alias is not supported, correctness is not guanranteed here.\n";
         break;
@@ -408,5 +600,57 @@ unsigned offsetToFieldNum(const Value* ptr, int64_t offset, const DataLayout* da
   }
 
   return ret;
-#endif
+}
+
+// given the old object node, old size, and the new object node
+// replace all point-to info to the new node
+// including the value to object node mapping
+static void updateObjectNode(NodeIndex oldObj, NodeIndex newObj,
+                             AndersNodeFactory &nodeFactory,PtsGraph &ptsGraph) {
+  unsigned offset = nodeFactory.getObjectOffset(oldObj);
+  NodeIndex baseObj = nodeFactory.getOffsetObjectNode(oldObj, -(int)offset);
+  unsigned size = nodeFactory.getObjectSize(oldObj);
+
+  // well, really expensive op
+  // use explicit iterator for updating
+  for (auto itr = ptsGraph.begin(), end = ptsGraph.end(); itr != end; ++itr) {
+    AndersPtsSet temp = itr->second; // make a copy
+    // in case modification will break iteration
+    for (auto obj = temp.find_first(), end = temp.getSize(); obj < end;
+         obj = temp.find_next(obj)) {
+      if (obj >= baseObj && obj < (baseObj + size)) {
+        itr->second.reset(obj);
+        itr->second.insert(newObj + (obj - baseObj));
+      }
+    }
+  }
+}
+
+// given old object node and new struct info, extend the object size
+// return the new object node
+NodeIndex extendObjectSize(NodeIndex oldObj, const StructType* stType,
+                           AndersNodeFactory &nodeFactory,
+                           StructAnalyzer &structAnalyzer,
+                           PtsGraph &ptsGraph) {
+  // FIXME: assuming oldObj is the base
+  assert(nodeFactory.getObjectOffset(oldObj) == 0);
+  bool isHeap = nodeFactory.isHeapObject(oldObj);
+
+  const Value *val = nodeFactory.getValueForNode(oldObj);
+  assert(val != NULL && "Failed to find value of node");
+  NodeIndex valNode = nodeFactory.getValueNodeFor(val);
+
+  // before creating new obj, remove the old ptr->obj
+  auto itr = ptsGraph.find(valNode);
+  assert(itr != ptsGraph.end() && itr->second.has(oldObj) && "Failed to find old obj in ptsGraph");
+  itr->second.reset(oldObj);
+  nodeFactory.removeNodeForObject(val);
+
+  // create new obj
+  NodeIndex newObj = processStruct(val, stType, isHeap, nodeFactory, structAnalyzer);
+
+  // update ptr2set
+  updateObjectNode(oldObj, newObj, nodeFactory, ptsGraph);
+
+  return newObj;
 }
