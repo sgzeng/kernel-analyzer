@@ -38,7 +38,11 @@ typedef llvm::SmallPtrSet<const llvm::Function*, 8> FuncSet;
 typedef std::unordered_map<NodeIndex, FuncSet> FuncPtrMap;
 
 typedef llvm::DenseMap<const llvm::Function*, CallInstSet> CallerMap;
+#if LLVM_VERSION_MAJOR > 10
+typedef llvm::DenseMap<llvm::CallBase*, FuncSet> CalleeMap;
+#else
 typedef llvm::DenseMap<llvm::CallInst*, FuncSet> CalleeMap;
+#endif
 
 typedef std::unordered_map<std::size_t, AndersPtsSet> PtsGraph;
 typedef std::unordered_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;

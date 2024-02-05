@@ -188,11 +188,9 @@ bool CallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
 }
 
 #if LLVM_VERSION_MAJOR > 10
-bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF,
-                               SmallVectorImpl<Instruction*> &worklist, bool &Changed) {
+bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF) {
 #else
-bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF,
-                               SmallVectorImpl<Instruction*> &worklist, bool &Changed) {
+bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF) {
 #endif
   if (CF->isIntrinsic())
     return false;
@@ -200,8 +198,11 @@ bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF,
   // assumes CF is the function definition
   if (CF->empty()) {
     // external function, nothing to do
+    WARNING("Call: " << CF->getName() << " is empty!\n");
     return false;
   }
+
+  bool Changed = false;
 
   // handle args
   unsigned numArgs = CS->arg_size();
@@ -210,20 +211,28 @@ bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF,
     assert(formalNode != AndersNodeFactory::InvalidIndex && "Formal argument node not found!");
     for (unsigned i = 0; i < numArgs; i++) {
       Value *arg = CS->getArgOperand(i);
-      if (funcPts.find(arg) == funcPts.end()) continue;
       NodeIndex argNode = NF.getValueNodeFor(arg);
+#if 1
+      if (argNode == AndersNodeFactory::InvalidIndex) {
+        WARNING("VarArg: actual (" << i << ") " << *arg << " node not found!\n");
+      }
+      // FIXME: don't do anything for now
+#else
       assert(argNode != AndersNodeFactory::InvalidIndex && "Actual argument node not found!");
       auto itr = funcPtsGraph.find(argNode);
       assert(itr != funcPtsGraph.end() && "Actual argument node not found in the graph!");
       if (funcPtsGraph[formalNode].insert(itr->second) > 0) {
         CG_LOG("VarArg: (" << i << ") " << *CS << " -> " << CF->getName() << "\n");
       }
+#endif
     }
   } else {
-    assert(numArgs == CF->arg_size() && "Call argument number mismatch!");
+    if (numArgs != CF->arg_size()) {
+      WARNING("Call argument number mismatch! " << *CS << " -> " << CF->getName() << "\n");
+      return false;
+    }
     for (unsigned i = 0; i < numArgs; i++) {
       Value *arg = CS->getArgOperand(i);
-      if (funcPts.find(arg) == funcPts.end()) continue;
       NodeIndex argNode = NF.getValueNodeFor(arg);
       assert(argNode != AndersNodeFactory::InvalidIndex && "Actual argument node not found!");
       auto itr = funcPtsGraph.find(argNode);
@@ -231,23 +240,25 @@ bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF,
         Value *farg = CF->getArg(i);
         NodeIndex formalNode = NF.getValueNodeFor(farg);
         assert(formalNode != AndersNodeFactory::InvalidIndex && "Formal argument node not found!");
+#if 0
+        for (auto idx = itr->second.find_first(), end = itr->second.getSize();
+             idx < end; idx = itr->second.find_next(idx)) {
+          if (funcPtsGraph[formalNode].insert(idx)) {
+            CG_LOG("Arg: (" << i << ") " << idx << " -> " << CF->getName() << "\n");
+            Changed = true;
+          }
+        }
+#else
         if (funcPtsGraph[formalNode].insert(itr->second) > 0) {
           CG_LOG("Arg: (" << i << ") " << *CS << " -> " << CF->getName() << "\n");
-          // add the formal node to the workset
-          _workset.insert(farg);
-          funcPts.insert(farg);
           Changed = true;
         }
-      } else if (funcPts.find(arg) != funcPts.end()) {
-        // we are expecting point2 from the actual argument
-        CG_LOG("Call: (" << i << ") " << *CS << " actual argument node not found in the graph: " << *arg << "\n");
-        Changed |= findDefinitions(arg, worklist);
+#endif
       }
     }
   }
 
   // handle return
-  bool ret = false;
   if (!CF->getReturnType()->isVoidTy()) {
     NodeIndex retNode = NF.getReturnNodeFor(CF);
     assert(retNode != AndersNodeFactory::InvalidIndex && "Return node not found!");
@@ -265,51 +276,13 @@ bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF,
           idx = NF.createOpaqueObjectNode(CS, true);
           WARNING("Call: treating " << CF->getName() << " as an allocator (" << idx << ")\n");
         }
-        ret |= funcPtsGraph[callNode].insert(idx);
+        CG_LOG("Ret: obj = " << idx << "\n");
+        Changed |= funcPtsGraph[callNode].insert(idx);
       }
-    } else if (funcPts.find(CS) != funcPts.end()) {
-      // we are expecting point2 from the return value
-      CG_LOG("Call: " << *CS << " return node not found in the graph: " << CF->getName() << "\n");
-      // add the return inst to the workset
-      for (auto &BB : *CF) {
-        if (auto *I = dyn_cast<ReturnInst>(BB.getTerminator())) {
-          CG_LOG("Tracing Return: " << *I << "\n");
-          ReturnInst *RI = const_cast<ReturnInst*>(I);
-          _workset.insert(RI);
-          funcPts.insert(RI->getReturnValue());
-        }
-      }
-      Changed = true;
     }
   }
 
-  return ret;
-}
-
-bool CallGraphPass::findDefinitions(Value *ptr, SmallVectorImpl<Instruction*> &worklist) {
-  // point2 of ptr has not been resolved yet
-  if (Instruction *PI = dyn_cast<Instruction>(ptr)) {
-    // if ptr is from a local instruction, add it to the worklist
-    worklist.push_back(PI);
-  } else if (Argument *A = dyn_cast<Argument>(ptr)) {
-    // if ptr is from an argument, add the actual argument to the workset
-    if (funcPts.find(A) != funcPts.end()) {
-      Function *F = A->getParent();
-      for (auto CS : Ctx->Callers[F]) {
-        auto argNum = A->getArgNo();
-        Value *arg = CS->getArgOperand(argNum);
-        Function *CF = CS->getParent()->getParent();
-        CG_LOG("Tracing Arg Ptr: " << *CS << " <- " << CF->getName() << ":" << argNum << "\n");
-        _workset.insert(CS);
-        funcPts.insert(arg);
-      }
-      return true;
-    }
-  } else {
-    WARNING("Unhandled ptr source: " << *ptr << "\n");
-  }
-
-  return false;
+  return Changed;
 }
 
 static inline Type *getElementTy(Type *T) {
@@ -328,47 +301,17 @@ static inline Type *getElementTy(Type *T) {
 bool CallGraphPass::runOnFunction(Function *F) {
   bool Changed = false;
 
-  SmallVector<Instruction*, 32> worklist;
-
-  // collect from arguments
-  for (Argument &A : F->args()) {
-    if (_workset.find(&A) != _workset.end()) {
-      _workset.erase(&A);
-      NodeIndex argNode = NF.getValueNodeFor(&A);
-      assert(argNode != AndersNodeFactory::InvalidIndex && "Argument node not found!");
-      auto itr = funcPtsGraph.find(argNode);
-      assert(itr != funcPtsGraph.end() && "Argument node not found in the graph!");
-      for (User *U : A.users()) {
-        if (Instruction *UI = dyn_cast<Instruction>(U)) {
-          worklist.push_back(UI);
-        }
-      }
-    }
-  }
+  CG_LOG("######\nProcessing Func: " << F->getName() << "\n");
 
   for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
     Instruction *I = &*i;
 
-    if (_workset.find(I) == _workset.end())
+    if (isa<BranchInst>(I) || isa<SwitchInst>(I) || isa<UnreachableInst>(I) ||
+        isa<BinaryOperator>(I) || isa<SExtInst>(I) || isa<ZExtInst>(I) ||
+        isa<TruncInst>(I) || isa<ICmpInst>(I) || isa<FCmpInst>(I))
       continue;
-    _workset.erase(I);
-    worklist.push_back(I);
-  }
-
-  if (worklist.empty())
-    return Changed;
-
-  CG_LOG("######\nProcessing Func: " << F->getName() << "\n");
-
-  // FIXME: reverse the worklist?
-  std::reverse(worklist.begin(), worklist.end());
-
-  while (!worklist.empty()) {
-    Instruction *I = worklist.pop_back_val();
 
     CG_LOG("Processing instruction: " << *I << "\n");
-    // propagate function pointer assignments
-    bool propagated = false;
     switch (I->getOpcode()) {
     case Instruction::Ret: {
       if (I->getNumOperands() > 0) {
@@ -382,16 +325,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
           assert(RT != AndersNodeFactory::InvalidIndex && "Return node not found!");
           if (funcPtsGraph[RT].insert(itr->second) > 0) {
             CG_LOG("Ret: " << *I << " <- " << F->getName() << "\n");
-            // add callsites to the workset
-            for (auto CS: Ctx->Callers[F]) {
-              _workset.insert(CS);
-              funcPts.insert(CS);
-            }
             Changed = true;
           }
-        } else if (funcPts.find(rv) != funcPts.end()) {
-          CG_LOG("Ret: " << *I << " return value node not found in the graph: " << *rv << "\n");
-          Changed |= findDefinitions(rv, worklist);
         }
       }
       break;
@@ -407,7 +342,10 @@ bool CallGraphPass::runOnFunction(Function *F) {
       if (CS->isInlineAsm()) break;
       if (Function *CF = CS->getCalledFunction()) {
         // direct call
-        propagated = handleCall(CS, getFuncDef(CF), worklist, Changed);
+        auto RCF = getFuncDef(CF);
+        reachable.insert(RCF);
+        Ctx->Callees[CS].insert(RCF);
+        Changed |= handleCall(CS, RCF);
         break;
       }
       // indirect call
@@ -428,31 +366,24 @@ bool CallGraphPass::runOnFunction(Function *F) {
           assert(NF.isObjectNode(idx) && "Function pointer points to non-object!");
           const Value *CV = NF.getValueForNode(idx);
           assert(CV != NULL && "No value for function node!");
-          const Function *CF = dyn_cast<Function>(CV);
+          Function *CF = dyn_cast<Function>(const_cast<Value*>(CV));
           if (CF == NULL) {
             KA_ERR("Function pointer " << *CO << " points to non-function: " << *CV << "\n");
           }
+          reachable.insert(CF);
+          Ctx->Callees[CS].insert(CF);
           CG_LOG("Indirect Call: callee: " << CF->getName() << "\n");
-          propagated |= handleCall(CS, CF, worklist, Changed);
-          // update callers
-          CallInstSet &CIS = Ctx->Callers[CF];
-          CIS.insert(CS);
+          Changed |= handleCall(CS, CF);
         }
       }
       break;
     }
     case Instruction::Alloca: {
-      // alloca should only be in the worklist for tracing back ptr defs,
-      // so we only care about the store users
-      for (User *U : I->users()) {
-        if (StoreInst *SI = dyn_cast<StoreInst>(U)) {
-          worklist.push_back(SI);
-          funcPts.insert(SI->getValueOperand());
-        }
-      }
+      // do nothing
       break;
     }
     case Instruction::Load: {
+      bool isNull = false;
       Value *ptr = I->getOperand(0);
       NodeIndex ptrNode = NF.getValueNodeFor(ptr);
       NodeIndex valNode = NF.getValueNodeFor(I);
@@ -463,30 +394,37 @@ bool CallGraphPass::runOnFunction(Function *F) {
              idx < end; idx = itr->second.find_next(idx)) {
           // for every obj the source ptr points to, propagate the func ptrs
           CG_LOG("Load: source obj: " << idx << "\n");
+          if (idx == NF.getNullObjectNode() && itr->second.find_next(idx) == end) {
+            CG_LOG("Loading from null obj, ptr = " << ptrNode << "\n");
+            isNull = true;
+            // XXX
+            funcPtsGraph[valNode].insert(idx);
+            break;
+          }
           auto itr2 = funcPtsGraph.find(idx);
           if (itr2 != funcPtsGraph.end()) {
 #if 1
             for (auto idx2 = itr2->second.find_first(), end2 = itr2->second.getSize();
                  idx2 < end2; idx2 = itr2->second.find_next(idx2)) {
               CG_LOG("Load: insert: " << idx2 << "\n");
-              propagated |= funcPtsGraph[valNode].insert(idx2);
+              Changed |= funcPtsGraph[valNode].insert(idx2);
             }
 #else
-            propagated |= (funcPtsGraph[valNode].insert(itr2->second) > 0);
+            Changed |= (funcPtsGraph[valNode].insert(itr2->second) > 0);
 #endif
+          } else {
+            CG_LOG("Load: source obj not found in the graph: " << idx << "\n");
           }
         }
-      }
-      itr = funcPtsGraph.find(valNode);
-      if ((itr == funcPtsGraph.end()) && (funcPts.find(I) != funcPts.end())) {
-        // we are expecting point2 from the loaded value
-        CG_LOG("Load: pointer operand not found in the graph: " << ptrNode << "\n");
-        Changed |= findDefinitions(ptr, worklist);
       }
       break;
     }
     case Instruction::Store: {
       Value *val = I->getOperand(0);
+      if (!val->getType()->isPointerTy()) {
+        // XXX only consider pointer type
+        break;
+      }
       Value *ptr = I->getOperand(1);
       NodeIndex valNode = NF.getValueNodeFor(val);
       NodeIndex ptrNode = NF.getValueNodeFor(ptr);
@@ -499,28 +437,13 @@ bool CallGraphPass::runOnFunction(Function *F) {
           for (auto idx = itr2->second.find_first(), end = itr2->second.getSize();
               idx < end; idx = itr2->second.find_next(idx)) {
             CG_LOG("Store: dst obj: " << idx << "\n");
-            if (NF.isSpecialNode(idx)) continue;
-            if (funcPtsGraph[idx].insert(itr->second) > 0) {
-              // for store, we want to add the load users of the dst ptr to the workset
-              for (User *U : ptr->users()) {
-                if (LoadInst *LI = dyn_cast<LoadInst>(U)) {
-                  worklist.push_back(LI);
-                }
-              }
-              // conservatively set the changed flag if the dst ptr is a heap obj
-              Changed |= NF.isHeapObject(idx);
+            if (NF.isSpecialNode(idx)) {
+              WARNING("Store: dst obj is a special node: " << idx << "\n")
+              continue;
             }
+            Changed |= (funcPtsGraph[idx].insert(itr->second) > 0);
           }
-        } else {
-          // we know the value node can reach a func ptr, but the dst ptr is not in the graph
-          CG_LOG("Store: pointer operand not found in the graph: " << ptrNode << "\n");
-          funcPts.insert(ptr);
-          Changed |= findDefinitions(ptr, worklist);
         }
-      } else if (funcPts.find(val) != funcPts.end()) {
-        // we are expecting point2 from the stored value
-        CG_LOG("Store: value operand not found in the graph: " << valNode << "\n");
-        Changed |= findDefinitions(val, worklist);
       }
       break;
     }
@@ -540,21 +463,31 @@ bool CallGraphPass::runOnFunction(Function *F) {
           CG_LOG("GEP source obj " << idx << "\n");
           if (NF.isSpecialNode(idx)) {
             // special object, e.g., null or univeral
-            propagated |= funcPtsGraph[valNode].insert(idx);
+            Changed |= funcPtsGraph[valNode].insert(idx);
             continue;
           }
 
           // check if we need to resize the obj of the ptr
+          // get allocated size
+          unsigned allocSize = NF.getObjectSize(idx);
           if (StructType *STy = dyn_cast<StructType>(ptrTy)) {
             const StructInfo* stInfo = SA.getStructInfo(STy, F->getParent());
             assert(stInfo != NULL && "Struct info not found!");
             unsigned ptrSize = stInfo->getExpandedSize();
-            // get allocated size
-            unsigned allocSize = NF.getObjectSize(idx);
-            if (NF.isOpaqueObject(idx) || ptrSize > allocSize) {
-              CG_LOG("GEP resize obj: " << idx << " to type " << STy->getName() << "\n");
-              // resize the obj
-              idx = extendObjectSize(idx, STy, NF, SA, funcPtsGraph);
+            if (ptrSize > allocSize) {
+              if (NF.isOpaqueObject(idx)) {
+                // we don't know the allocation size for opaque objects
+                CG_LOG("GEP resize obj: " << idx << " to type " << STy->getName() << "\n");
+                assert(NF.isHeapObject(idx) && "GEP: non-heap obj needs to be resized!");
+                // resize the obj
+                idx = extendObjectSize(idx, STy, NF, SA, funcPtsGraph);
+              } else {
+                // XXX: this is likely due to passing data as void*
+                // lacking context sensitivity, we cannot distinguish them
+                // so remove them from the resulting point2 set
+                WARNING("GEP non-opaque obj size mismatch: " << idx << " vs type " << STy->getName() << "\n");
+                continue;
+              }
             }
           }
 
@@ -571,14 +504,16 @@ bool CallGraphPass::runOnFunction(Function *F) {
           }
           CG_LOG("GEP fieldNum: " << fieldNum << "\n");
 
+          NodeIndex nidx = idx + fieldNum;
+          // XXX: corner cases, e.g., struct with varaiable size array
+          if ((NF.getObjectOffset(idx) + fieldNum) > allocSize) {
+            WARNING("GEP: field number " << nidx << " out of bound (" << allocSize << ")!");
+            nidx = allocSize - 1;
+          }
+
           // propagate the ptr info
-          propagated |= funcPtsGraph[valNode].insert(idx + fieldNum);
+          Changed |= funcPtsGraph[valNode].insert(nidx);
         }
-      } else if (funcPts.find(I) != funcPts.end()) {
-        // we are expecting point2 from the resulting ptr
-        CG_LOG("GEP: pointer operand not found in the graph: " << ptrNode << "\n");
-        funcPts.insert(ptr);
-        Changed |= findDefinitions(ptr, worklist);
       }
       break;
     }
@@ -589,17 +524,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
       if (itr != funcPtsGraph.end()) {
         // if the point2 set of the source ptr is not empty
         NodeIndex dstNode = NF.getValueNodeFor(I);
-        propagated |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
-      } else if (funcPts.find(I) != funcPts.end()) {
-        // we are expecting point2 from the resulting ptr
-        CG_LOG("BitCast: src node not found in the graph: " << srcNode << "\n");
-        funcPts.insert(I->getOperand(0));
-        Changed |= findDefinitions(I->getOperand(0), worklist);
+        Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
       }
-      break;
-    }
-    case Instruction::ICmp: {
-      // do nothing
       break;
     }
     case Instruction::PHI: {
@@ -611,12 +537,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
         auto itr = funcPtsGraph.find(srcNode);
         if (itr != funcPtsGraph.end()) {
           // if the point2 set of the source ptr is not empty
-          propagated |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
-        } else if (funcPts.find(PHI) != funcPts.end()) {
-          // we are expecting point2 from the resulting ptr
-          CG_LOG("PHI: src node not found in the graph: " << srcNode << "\n");
-          funcPts.insert(PHI->getIncomingValue(i));
-          Changed |= findDefinitions(PHI->getIncomingValue(i), worklist);
+          Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
         }
       }
       break;
@@ -629,12 +550,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
         auto itr = funcPtsGraph.find(srcNode);
         if (itr != funcPtsGraph.end()) {
           // if the point2 set of the source ptr is not empty
-          propagated |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
-        } else if (funcPts.find(I) != funcPts.end()) {
-          // we are expecting point2 from the resulting ptr
-          CG_LOG("Select: src node not found in the graph: " << srcNode << "\n");
-          funcPts.insert(I->getOperand(i));
-          Changed |= findDefinitions(I->getOperand(i), worklist);
+          Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
         }
       }
       break;
@@ -643,36 +559,9 @@ bool CallGraphPass::runOnFunction(Function *F) {
       WARNING("Unhandled instruction: " << *I << "\n");
     }
     } // end switch
-
-    if (propagated) {
-      // add current node to the ptr set
-      funcPts.insert(I);
-      // add all users of I to the workset
-      for (User *U : I->users()) {
-        if (Instruction *UI = dyn_cast<Instruction>(U)) {
-          worklist.push_back(UI);
-        }
-      }
-    }
   }
 
   return Changed;
-}
-
-void CallGraphPass::collectUsers(Value *V) {
-  if (funcPts.insert(V).second == false)
-    return;
-  for (User *U : V->users()) {
-    if (Instruction *I = dyn_cast<Instruction>(U)) {
-      _workset.insert(I);
-    } else if (Constant *C = dyn_cast<Constant>(U)) {
-      for (User *CU : C->users()) {
-        collectUsers(CU);
-      }
-    } else {
-      WARNING("Unhandled user type: " << *U << "\n");
-    }
-  }
 }
 
 bool CallGraphPass::doInitialization(Module *M) {
@@ -690,7 +579,6 @@ bool CallGraphPass::doInitialization(Module *M) {
 
     // collect address-taken functions
     if (F.hasAddressTaken()) {
-      collectUsers(&F);
       Ctx->AddressTakenFuncs.insert(&F);
 
       // only add fval -> fobj edge in call graph analysis?
@@ -707,6 +595,11 @@ bool CallGraphPass::doInitialization(Module *M) {
       funcPtsGraph[valNode].insert(objNode);
       CG_LOG("AddressTaken: " << F.getName() << " : " << valNode << " -> " << objNode << "\n");
     }
+
+    // reachable?
+    if (F.getName().equals("main") || F.getName().startswith("SyS_")) {
+      reachable.insert(&F);
+    }
   }
 
   return false;
@@ -719,12 +612,17 @@ bool CallGraphPass::doFinalization(Module *M) {
     for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
       // map callsite to possible callees
       if (CallInst *CI = dyn_cast<CallInst>(&*i)) {
+        if (CI->isInlineAsm())
+          continue;
         FuncSet &FS = Ctx->Callees[CI];
         // calculate the caller info here
         for (const Function *CF : FS) {
           CallInstSet &CIS = Ctx->Callers[CF];
           CIS.insert(CI);
         }
+        // collect indirect call targets by type
+        FuncSet &TS = calleeByType[CI];
+        findCalleesByType(CI, TS);
       }
     }
   }
@@ -741,7 +639,8 @@ bool CallGraphPass::doModulePass(Module *M) {
     for (Function &F : *M) {
       if (F.isDeclaration() || F.isIntrinsic() || F.empty())
         continue;
-      Changed |= runOnFunction(&F);
+      if (reachable.find(&F) != reachable.end())
+        Changed |= runOnFunction(&F);
     }
     ret |= Changed;
   }
@@ -771,7 +670,7 @@ void CallGraphPass::dumpCallees() {
     for (CalleeMap::iterator i = Ctx->Callees.begin(), 
          e = Ctx->Callees.end(); i != e; ++i) {
 
-        CallInst *CI = i->first;
+        auto CI = i->first;
         FuncSet &v = i->second;
         // only dump indirect call?
         if (CI->isInlineAsm() || CI->getCalledFunction() /*|| v.empty()*/)

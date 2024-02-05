@@ -10,15 +10,11 @@
 class CallGraphPass : public IterativeModulePass {
 private:
   llvm::Function *getFuncDef(llvm::Function*);
-  bool findDefinitions(llvm::Value*, llvm::SmallVectorImpl<Instruction*> &);
   bool runOnFunction(llvm::Function*);
-  void collectUsers(llvm::Value*);
 #if LLVM_VERSION_MAJOR > 10
-  bool handleCall(llvm::CallBase*, const llvm::Function*,
-      llvm::SmallVectorImpl<Instruction*> &, bool&);
+  bool handleCall(llvm::CallBase*, const llvm::Function*);
 #else
-  bool handleCall(llvm::CallInst*, const llvm::Function*,
-      llvm::SmallVectorImpl<Instruction*> &, bool&);
+  bool handleCall(llvm::CallInst*, const llvm::Function*);
 #endif
   bool isCompatibleType(llvm::Type *T1, llvm::Type *T2);
   bool findCalleesByType(llvm::CallInst*, FuncSet&);
@@ -27,8 +23,11 @@ private:
   StructAnalyzer &SA;
   PtsGraph funcPtsGraph;
 
-  std::unordered_set<llvm::Value*> _workset; // global inter-procedure workset
   std::unordered_set<const llvm::Value*> funcPts; // values that may reach a fptr
+  std::unordered_set<NodeIndex> funcPtsObj; // objects that may reach a fptr
+  std::unordered_set<llvm::Function*> reachable; // reachable from main
+
+  CalleeMap calleeByType;
 
 public:
     CallGraphPass(GlobalContext *Ctx_)
