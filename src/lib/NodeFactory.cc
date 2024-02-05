@@ -322,8 +322,12 @@ unsigned AndersNodeFactory::constGEPtoFieldNum(const llvm::ConstantExpr* expr) c
                 assert(itr2 != objNodeMap.end() && "const gep expr ptr should have a node!");
                 const Type *ATy = nodes[itr2->second].getAllocationType();
                 return offsetToFieldNum(ATy, offset, dataLayout, *structAnalyzer, module);
+            } else {
+                // slow path, convert to byte offset then back to field number
+                int64_t offset = getGEPOffset(GEP, dataLayout);
+                assert(offset >= 0 && "constexpr gep offset should be non-negative!");
+                return offsetToFieldNum(elemTy, offset, dataLayout, *structAnalyzer, module);
             }
-            KA_ERR("Unhandled ConstantGEP expr: " << *expr << "\n");
         } // else
         idx++;
     }
