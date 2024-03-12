@@ -2,12 +2,10 @@ set (KASource
   KAMain.cc
   Annotation.cc
   StructAnalyzer.cc
-  CallGraph.cc
-  #SafeStack.cc
-  #Range.cc
-  #LinuxSS.cc
   NodeFactory.cc
   PointTo.cc
+  CallGraph.cc
+  Reachable.cc
 )
 
 # Build executable, KAMain.

@@ -29,9 +29,9 @@
 #include <sys/resource.h>
 
 #include "Global.h"
-#include "CallGraph.h"
 #include "Pass.h"
 #include "PointTo.h"
+#include "Reachable.h"
 
 using namespace llvm;
 
@@ -47,15 +47,8 @@ cl::opt<unsigned> VerboseLevel(
 // cl::opt<bool> DumpCallers(
 //   "dump-caller-graph", cl::desc("Dump caller graph"), cl::NotHidden, cl::init(false));
 
-// cl::opt<bool> DoSafeStack(
-//   "safe-stack", cl::desc("Perfrom safe stack analysis"), cl::NotHidden, cl::init(false));
-
-// cl::opt<bool> DumpStackStats(
-//   "dump-stack-stats", cl::desc("Dump stack stats"), cl::NotHidden, cl::init(false));
-
-// cl::opt<bool> DoLSS(
-//   "linux-ss", cl::desc("Discover security sensitive data in Linux kernel"),
-//   cl::NotHidden, cl::init(false));
+cl::opt<std::string> TargetList(
+  "target-list", cl::desc("Target list"), cl::init(""));
 
 GlobalContext GlobalCtx;
 
@@ -194,36 +187,10 @@ int main(int argc, char **argv) {
   for (auto &[id, gv] : GlobalCtx.Gobjs) { GlobalCtx.ExtGobjs.erase(id); }
   for (auto &[id, f] : GlobalCtx.Funcs) { GlobalCtx.ExtFuncs.erase(id); }
 
-  // initialize nodefactory
-  populateNodeFactory(GlobalCtx);
-
   // Main workflow
-  CallGraphPass CGPass(&GlobalCtx);
-  CGPass.run(GlobalCtx.Modules);
-  CGPass.dumpCallees(errs());
-
-//   if (DumpCallees)
-//     CGPass.dumpCallees();
-
-//   if (DumpCallers)
-//     CGPass.dumpCallers();
-
-//   if (DoSafeStack) {
-// #ifdef DO_RANGE_ANALYSIS
-//     RangePass RPass(&GlobalCtx);
-//     RPass.run(GlobalCtx.Modules);
-// #endif
-
-//     SafeStackPass SSPass(&GlobalCtx);
-//     SSPass.run(GlobalCtx.Modules);
-//     if (DumpStackStats)
-//       SSPass.dumpStats();
-//   }
-
-//   if (DoLSS) {
-//     LinuxSS LSS(&GlobalCtx);
-//     LSS.run(GlobalCtx.Modules);
-//   }
+  ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList);
+  RCGPass.run(GlobalCtx.Modules);
+  RCGPass.dumpDistance(outs());
 
   return 0;
 }

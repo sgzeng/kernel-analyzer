@@ -220,6 +220,17 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
   return false;
 }
 
+bool isExitFn(StringRef name) {
+  if (!name.compare("exit") ||
+    !name.compare("_exit") ||
+    !name.compare("_Exit") ||
+    !name.compare("exit_group") ||
+    !name.compare("panic") ||
+    !name.compare("BUG") ||
+    !name.compare("BUG_ON"))
+    return true;
+  else return false;
+}
 
 std::string getStoreId(StoreInst *SI) {
   StringRef Id = getLoadStoreId(SI);
