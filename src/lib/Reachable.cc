@@ -27,6 +27,7 @@
 #include "PointTo.h"
 
 #define RA_LOG(stmt) KA_LOG(2, "Reachable: " << stmt)
+#define RA_DEBUG(stmt) KA_LOG(3, "Reachable: " << stmt)
 
 using namespace llvm;
 
@@ -76,7 +77,7 @@ bool ReachableCallGraphPass::isCompatibleType(Type *T1, Type *T2) {
 
     Type *ElT1 = T1->getArrayElementType();
     Type *ElT2 = T2->getArrayElementType();
-    return isCompatibleType(ElT1, ElT1);
+    return isCompatibleType(ElT1, ElT2);
   } else if (T1->isStructTy()) {
     StructType *ST1 = cast<StructType>(T1);
     StructType *ST2 = dyn_cast<StructType>(T2);
@@ -143,16 +144,18 @@ bool ReachableCallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
 #else
     CallSite CS(CI);
 #endif
-    //errs() << *CI << "\n";
+    bool Changed = false;
+    RA_LOG("Handle indirect call: " << *CI << "\n");
     for (const Function *F : Ctx->AddressTakenFuncs) {
       // just compare known args
       if (F->getFunctionType()->isVarArg()) {
         //errs() << "VarArg: " << F->getName() << "\n";
-        //report_fatal_error("VarArg address taken function\n");
+        KA_ERR("VarArg address taken function\n");
       } else if (F->arg_size() != CS.arg_size()) {
-        //errs() << "ArgNum mismatch: " << F.getName() << "\n";
+        RA_DEBUG("ArgNum mismatch: " << F->getName() << "\n");
         continue;
       } else if (!isCompatibleType(F->getReturnType(), CI->getType())) {
+        RA_DEBUG("Return type mismatch: " << F->getName() << "\n");
         continue;
       }
 
@@ -173,21 +176,25 @@ bool ReachableCallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
         if (isCompatibleType(FormalTy, ActualTy))
           continue;
         else {
+          RA_DEBUG("ArgType mismatch: " << F->getName() << " " << *FormalTy << " :: " << *ActualTy << "\n");
           Matched = false;
           break;
         }
       }
 
-      if (Matched)
-        return FS.insert(F).second;
+      if (Matched) {
+        RA_DEBUG("Matched: " << F->getName() << "\n");
+        Changed |= FS.insert(F).second;
+      }
     }
 
-    return false;
+    return Changed;
 }
 
 bool ReachableCallGraphPass::runOnFunction(Function *F) {
   bool Changed = false;
 
+  RA_LOG("### Run on function: " << F->getName() << "\n");
   for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
     Instruction *I = &*i;
     
@@ -217,7 +224,7 @@ bool ReachableCallGraphPass::runOnFunction(Function *F) {
     auto loc = I->getDebugLoc();
     if (loc) {
       for (auto &target : targetList) {
-        if (f == target.first && loc.getLine() == target.second) {
+        if (f.find(target.first) != std::string::npos && loc.getLine() == target.second) {
           RA_LOG("Target I: " << *I << "\n");
           distances[I->getParent()] = 0;
         }
@@ -414,7 +421,7 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS) {
     BasicBlock *BB = kv.first;
     for (auto &I : *BB) {
       auto &loc = I.getDebugLoc();
-      if (loc) {
+      if (loc && loc->getLine() != 0) {
         OS << loc->getFilename() << ":" << loc->getLine() << ",";
         break;
       }
@@ -440,9 +447,9 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS) {
 void ReachableCallGraphPass::dumpCallees() {
     RES_REPORT("\n[dumpCallees]\n");
     raw_ostream &OS = outs();
-    OS << "Num of Callees: " << Ctx->Callees.size() << "\n";
-    for (CalleeMap::iterator i = Ctx->Callees.begin(), 
-         e = Ctx->Callees.end(); i != e; ++i) {
+    OS << "Num of Callees: " << calleeByType.size() << "\n";
+    for (CalleeMap::iterator i = calleeByType.begin(),
+         e = calleeByType.end(); i != e; ++i) {
 
         auto CI = i->first;
         FuncSet &v = i->second;
