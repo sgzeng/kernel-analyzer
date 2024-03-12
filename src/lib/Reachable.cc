@@ -214,6 +214,7 @@ bool ReachableCallGraphPass::runOnFunction(Function *F) {
         auto &FS = calleeByType[CI];
         Changed |= findCalleesByType(CI, FS);
         for (auto F : FS) {
+          RA_DEBUG("Adding indirect caller for " << F->getName() << "@" << F << "\n");
           Changed |= callerByType[F].insert(CI).second;
         }
       }
@@ -240,8 +241,14 @@ bool ReachableCallGraphPass::doInitialization(Module *M) {
   for (Function &F : *M) {
     // collect address-taken functions
     if (F.hasAddressTaken()) {
-      Ctx->AddressTakenFuncs.insert(&F);
       RA_LOG("AddressTaken: " << F.getName() << "\n");
+      // hmmm, turns out F can be declaration
+      auto RF = getFuncDef(&F);
+      if (F.getFunctionType()->isVarArg()) {
+        RA_DEBUG("  VarArg: " << F.getName() << "\n");
+      } else {
+        Ctx->AddressTakenFuncs.insert(RF);
+      }
     }
 
     // collect the exit block of the main too
@@ -379,7 +386,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
             }
           }
         } else if (!F->getName().equals("main")) {
-          WARNING("No caller for " << F->getName() << "\n");
+          WARNING("No caller for " << F->getName() << "@" << F << "\n");
         }
       }
     }
