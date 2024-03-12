@@ -18,6 +18,7 @@
 #include <llvm/Analysis/CallGraph.h>
 
 #include <algorithm>
+#include <cassert>
 #include <deque>
 #include <fstream>
 #include <vector>
@@ -378,9 +379,9 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
             auto itr2 = distances.find(CBB);
             if (itr2 == distances.end()) {
               // for indirect call, prob needs to be divided by the number of potential callees
-              double prob = 1.0 / (1 << dist);
+              double prob = 1.0 / std::pow(2, dist);
               prob /= calleeByType[CI].size();
-              unsigned long idist = -(unsigned long)(-std::log2(prob));
+              unsigned long idist = (unsigned long)(-std::log2(prob));
               distances[CBB] = idist;
               worklist.push_back(CBB);
             }
@@ -429,7 +430,14 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS) {
     for (auto &I : *BB) {
       auto &loc = I.getDebugLoc();
       if (loc && loc->getLine() != 0) {
-        OS << loc->getFilename() << ":" << loc->getLine() << ",";
+        auto f = loc->getFilename();
+        if (f.empty()) {
+          f = BB->getParent()->getParent()->getSourceFileName();
+        }
+        if (f.find("./") == 0) {
+          f = f.substr(2);
+        }
+        OS << f << ":" << loc->getLine() << ",";
         break;
       }
     }
@@ -441,8 +449,15 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS) {
     if (distances.find(BB) == distances.end()) {
       for (auto &I : *BB) {
         auto &loc = I.getDebugLoc();
-        if (loc) {
-          OS << loc->getFilename() << ":" << loc->getLine() << ",";
+        if (loc && loc->getLine() != 0) {
+          auto f = loc->getFilename();
+          if (f.empty()) {
+            f = BB->getParent()->getParent()->getSourceFileName();
+          }
+          if (f.find("./") == 0) {
+            f = f.substr(2);
+          }
+          OS << f << ":" << loc->getLine() << ",";
           break;
         }
       }
