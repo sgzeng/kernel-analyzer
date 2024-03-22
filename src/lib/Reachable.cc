@@ -70,7 +70,7 @@ bool ReachableCallGraphPass::isCompatibleType(Type *T1, Type *T2) {
     if (ElT1->isIntegerTy(8) || ElT2->isIntegerTy(8))
       return true;
 
-      return isCompatibleType(ElT1, ElT2);
+    return isCompatibleType(ElT1, ElT2);
 #endif
   } else if (T1->isArrayTy()) {
     if (!T2->isArrayTy())
@@ -330,8 +330,8 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
   while (!worklist.empty()) {
     BasicBlock *BB = worklist.front();
     worklist.pop_front();
-    unsigned long dist = distances[BB];
-    assert(dist >= 0 && "distance should not be 0");
+    auto dist = distances[BB];
+    assert(dist >= 0.0 && "distance should not be 0");
     for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
       BasicBlock *Pred = *PI;
       // check if the distance is already set
@@ -350,7 +350,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
           }
         }
         prob /= numSucc;
-        unsigned long pdist = (unsigned long)(-std::log2(prob));
+        auto pdist = (-std::log2(prob));
         // FIXME: propagate to callee through return edge
         distances[Pred] = pdist;
         worklist.push_back(Pred);
@@ -381,7 +381,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
               // for indirect call, prob needs to be divided by the number of potential callees
               double prob = 1.0 / std::pow(2, dist);
               prob /= calleeByType[CI].size();
-              unsigned long idist = (unsigned long)(-std::log2(prob));
+              auto idist = (-std::log2(prob));
               distances[CBB] = idist;
               worklist.push_back(CBB);
             }

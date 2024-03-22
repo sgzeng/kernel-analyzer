@@ -21,7 +21,7 @@ private:
   CallerMap callerByType;
 
   std::vector<std::pair<std::string, int> > targetList;
-  std::unordered_map<llvm::BasicBlock*, unsigned long> distances;
+  std::unordered_map<llvm::BasicBlock*, double> distances;
   std::unordered_set<llvm::BasicBlock*> exitBBs;
 
 public:
