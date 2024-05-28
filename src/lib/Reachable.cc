@@ -19,7 +19,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <deque>
 #include <fstream>
 #include <vector>
 
@@ -254,6 +253,7 @@ bool ReachableCallGraphPass::doInitialization(Module *M) {
 
     // collect the exit block of the main too
     if (F.getName() == "main") {
+      entryBBs.insert(&F.getEntryBlock());
       for (auto &BB : F) {
         if (isa<ReturnInst>(BB.getTerminator())) {
           exitBBs.insert(&BB);
@@ -267,6 +267,46 @@ bool ReachableCallGraphPass::doInitialization(Module *M) {
 
 bool ReachableCallGraphPass::doFinalization(Module *M) {
   return false;
+}
+
+void ReachableCallGraphPass::collectReachable(std::deque<BasicBlock*> &worklist, std::unordered_set<BasicBlock*> &reachable) {
+  while (!worklist.empty()) {
+    BasicBlock *BB = worklist.front();
+    worklist.pop_front();
+    for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
+      BasicBlock *Pred = *PI;
+      if (reachable.insert(Pred).second) {
+        worklist.push_back(Pred);
+      }
+    }
+    // entry block, add caller
+    Function *F = BB->getParent();
+    if (BB == &F->getEntryBlock()) {
+      auto itr = Ctx->Callers.find(F);
+      if (itr != Ctx->Callers.end()) {
+        RA_DEBUG("Direct call can reach: " << F->getName() << "\n");
+        for (auto CI : itr->second) {
+          auto CBB = CI->getParent();
+          if (reachable.insert(CBB).second) {
+            worklist.push_back(CBB);
+          }
+        }
+      } else {
+        itr = callerByType.find(F);
+        if (itr != callerByType.end()) {
+          RA_DEBUG("Indirect call can reach: " << F->getName() << "\n");
+          for (auto CI : itr->second) {
+            auto CBB = CI->getParent();
+            if (reachable.insert(CBB).second) {
+              worklist.push_back(CBB);
+            }
+          }
+        } else if (!F->getName().equals("main")) {
+          WARNING("No caller for " << F->getName() << "\n");
+        }
+      }
+    }
+  }
 }
 
 void ReachableCallGraphPass::run(ModuleList &modules) {
@@ -285,104 +325,94 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
 
   // do a BFS search on the call graph to find BB that can reach exits
   std::deque<BasicBlock*> worklist;
+  RA_DEBUG("=== Collecting exit BBs ===\n");
   worklist.insert(worklist.end(), exitBBs.begin(), exitBBs.end());
-  while (!worklist.empty()) {
-    BasicBlock *BB = worklist.front();
-    worklist.pop_front();
-    for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
-      BasicBlock *Pred = *PI;
-      if (exitBBs.insert(Pred).second) {
-        worklist.push_back(Pred);
-      }
-    }
-    // entry block, add caller
-    if (BB == &BB->getParent()->getEntryBlock()) {
-      Function *F = BB->getParent();
-      auto itr = Ctx->Callers.find(F);
-      if (itr != Ctx->Callers.end()) {
-        RA_LOG("Direct call can reach exit: " << F->getName() << "\n");
-        for (auto CI : itr->second) {
-          auto CBB = CI->getParent();
-          if (exitBBs.insert(CBB).second) {
-            worklist.push_back(CBB);
-          }
-        }
-      } else {
-        itr = callerByType.find(F);
-        if (itr != callerByType.end()) {
-          RA_LOG("Indirect call can reach exit: " << F->getName() << "\n");
-          for (auto CI : itr->second) {
-            auto CBB = CI->getParent();
-            if (exitBBs.insert(CBB).second) {
-              worklist.push_back(CBB);
-            }
-          }
-        } else if (!F->getName().equals("main")) {
-          WARNING("No caller for " << F->getName() << "\n");
-        }
-      }
-    }
-  }
+  collectReachable(worklist, exitBBs);
 
-  // now do a BFS search on the target list
+  // now do a BFS search on the target list, find all reachable BBs first
+  RA_DEBUG("=== Collecting reachable BBs ===\n");
   for (const auto &kv : distances)
     worklist.push_back(kv.first);
+  collectReachable(worklist, reachableBBs);
+
+  // now calculate distances in a bottom-up manner
+  for (const auto &kv : distances)
+    worklist.push_back(kv.first);
+  // fixed point iteration?
   while (!worklist.empty()) {
     BasicBlock *BB = worklist.front();
     worklist.pop_front();
-    auto dist = distances[BB];
-    assert(dist >= 0.0 && "distance should not be 0");
+    // check predecessors
     for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
       BasicBlock *Pred = *PI;
-      // check if the distance is already set
-      auto itr = distances.find(Pred);
-      if (itr == distances.end()) {
-        double prob = 1.0 / std::pow(2, dist);
-        assert(prob > 0.0);
-        int numSucc = 0;
-        for (auto SI = succ_begin(Pred), SE = succ_end(Pred); SI != SE; ++SI) {
-          BasicBlock *Succ = *SI;
-          numSucc++;
-          if (Succ == BB) continue;
-          auto itr2 = distances.find(Succ);
-          if (itr2 != distances.end()) {
-            prob += 1.0 / std::pow(2, itr2->second);
-          }
+      int numSucc = 0;
+      double prob = 0.0;
+      for (auto SI = succ_begin(Pred), SE = succ_end(Pred); SI != SE; ++SI) {
+        BasicBlock *Succ = *SI;
+        numSucc++;
+        // unreachable one has prob 0
+        if (reachableBBs.find(Succ) == reachableBBs.end())
+          continue;
+        auto itr = distances.find(Succ);
+        if (itr != distances.end()) {
+          prob += 1.0 / std::pow(2, itr->second);
         }
-        prob /= numSucc;
-        auto pdist = (-std::log2(prob));
-        // FIXME: propagate to callee through return edge
-        distances[Pred] = pdist;
+      }
+      prob /= numSucc;
+      auto dist = (-std::log2(prob));
+      // FIXME: propagate to callee through return edge
+      auto itr = distances.find(Pred);
+      if (itr == distances.end() || itr->second != dist) {
+        // RA_DEBUG("Adding Pred: " << *Pred << " with prob " << prob << "\n");
+        distances[Pred] = dist;
         worklist.push_back(Pred);
       }
     }
-    // entry block, add caller
-    if (BB == &BB->getParent()->getEntryBlock()) {
-      Function *F = BB->getParent();
+    // entry block has no predecessor, add caller
+    Function *F = BB->getParent();
+    if (BB == &F->getEntryBlock()) {
       auto itr = Ctx->Callers.find(F);
       if (itr != Ctx->Callers.end()) {
         RA_LOG("Direct call can reach target: " << F->getName() << "\n");
+        // for direct calls, prob can be propagated directly
+        auto dist = distances[BB];
         for (auto CI : itr->second) {
           auto CBB = CI->getParent();
           auto itr2 = distances.find(CBB);
-          if (itr2 == distances.end()) {
+          if (itr2 == distances.end() || itr2->second != dist) {
+            RA_DEBUG("Adding caller: " << CI->getFunction()->getName() << "\n");
             distances[CBB] = dist;
             worklist.push_back(CBB);
           }
         }
       } else {
+        // indirect call is tricky, treat like predecessors
         itr = callerByType.find(F);
         if (itr != callerByType.end()) {
           RA_LOG("Indirect call can reach target: " << F->getName() << "\n");
           for (auto CI : itr->second) {
             auto CBB = CI->getParent();
-            auto itr2 = distances.find(CBB);
-            if (itr2 == distances.end()) {
-              // for indirect call, prob needs to be divided by the number of potential callees
-              double prob = 1.0 / std::pow(2, dist);
-              prob /= calleeByType[CI].size();
-              auto idist = (-std::log2(prob));
-              distances[CBB] = idist;
+            auto old = distances[CBB];
+            // for each call site, check if all its callees have been processed
+            int numCallees = 0;
+            double prob = 0.0;
+            for (auto F : calleeByType[CI]) {
+              numCallees++;
+              auto CEBB = const_cast<BasicBlock*>(&F->getEntryBlock());
+              if (reachableBBs.find(CEBB) == reachableBBs.end()) {
+                continue;
+              }
+              auto itr2 = distances.find(CEBB);
+              if (itr2 != distances.end()) {
+                prob += 1.0 / std::pow(2, itr2->second);
+              }
+            }
+            // for indirect call, prob needs to be divided by the number of potential callees
+            prob /= numCallees;
+            auto dist = (-std::log2(prob));
+            if (old != dist) {
+              RA_DEBUG("Adding indirect caller: " << CI->getFunction()->getName() << "\n");
+              distances[CBB] = dist;
               worklist.push_back(CBB);
             }
           }
@@ -423,30 +453,71 @@ ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_, std::string 
   }
 }
 
-void ReachableCallGraphPass::dumpDistance(raw_ostream &OS) {
+void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bool dumpUnreachable) {
+  std::deque<BasicBlock*> worklist;
+  std::unordered_set<BasicBlock*> visited;
+  unsigned long currentDist = -1;
+  for (auto BB : entryBBs) {
+    if (distances.find(BB) != distances.end()) {
+      RA_LOG("Entry BB of " << BB->getParent()->getName() << " is reachable\n");
+      worklist.push_back(BB);
+      visited.insert(BB);
+    }
+  }
+  if (worklist.empty()) {
+    WARNING("Target not reachable from entry BBs\n");
+    return;
+  }
   // dump reachable bb
-  for (const auto &kv : distances) {
-    BasicBlock *BB = kv.first;
-    for (auto &I : *BB) {
-      auto &loc = I.getDebugLoc();
-      if (loc && loc->getLine() != 0) {
-        auto f = loc->getFilename();
-        if (f.empty()) {
-          f = BB->getParent()->getParent()->getSourceFileName();
+  if (dumpSolution) {
+    while (!worklist.empty()) {
+      BasicBlock *BB = worklist.front();
+      worklist.pop_front();
+      if (distances[BB] < currentDist) {
+        currentDist = distances[BB];
+        RA_DEBUG("Best option: " << BB->getParent()->getName() << " at " << currentDist << "\n");
+      }
+      bool printed = false;
+      for (auto &I : *BB) {
+        if (!printed) {
+          auto &loc = I.getDebugLoc();
+          if (loc && loc->getLine() != 0) {
+            auto f = loc->getFilename();
+            if (f.empty()) {
+              f = BB->getParent()->getParent()->getSourceFileName();
+            }
+            if (f.find("./") == 0) {
+              f = f.substr(2);
+            }
+            OS << f << ":" << loc->getLine() << ",";
+            OS << distances[BB] << "\n";
+            printed = true;
+          }
         }
-        if (f.find("./") == 0) {
-          f = f.substr(2);
+        // check for callees
+        if (CallInst *CI = dyn_cast<CallInst>(&I)) {
+          auto itr = Ctx->Callees.find(CI);
+          if (itr == Ctx->Callees.end()) {
+            itr = calleeByType.find(CI);
+          }
+          for (auto F: itr->second) {
+            BasicBlock *FBB = const_cast<BasicBlock*>(&F->getEntryBlock());
+            if (distances.find(FBB) != distances.end() && visited.insert(FBB).second) {
+              worklist.push_back(FBB);
+            }
+          }
         }
-        OS << f << ":" << loc->getLine() << ",";
-        break;
+      }
+      for (auto SI = succ_begin(BB), SE = succ_end(BB); SI != SE; ++SI) {
+        BasicBlock *Succ = *SI;
+        if (distances.find(Succ) != distances.end() && visited.insert(Succ).second) {
+          worklist.push_back(Succ);
+        }
       }
     }
-    OS << kv.second << "\n";
-  }
-
-  // dump unreachable bb
-  for (auto BB : exitBBs) {
-    if (distances.find(BB) == distances.end()) {
+  } else {
+    for (const auto &kv : distances) {
+      BasicBlock *BB = kv.first;
       for (auto &I : *BB) {
         auto &loc = I.getDebugLoc();
         if (loc && loc->getLine() != 0) {
@@ -461,7 +532,30 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS) {
           break;
         }
       }
-      OS << "inf\n";
+      OS << kv.second << "\n";
+    }
+  }
+
+  // dump unreachable bb
+  if (dumpUnreachable) {
+    for (auto BB : exitBBs) {
+      if (distances.find(BB) == distances.end()) {
+        for (auto &I : *BB) {
+          auto &loc = I.getDebugLoc();
+          if (loc && loc->getLine() != 0) {
+            auto f = loc->getFilename();
+            if (f.empty()) {
+              f = BB->getParent()->getParent()->getSourceFileName();
+            }
+            if (f.find("./") == 0) {
+              f = f.substr(2);
+            }
+            OS << f << ":" << loc->getLine() << ",";
+            break;
+          }
+        }
+        OS << "inf\n";
+      }
     }
   }
 }
