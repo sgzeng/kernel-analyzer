@@ -227,7 +227,8 @@ bool ReachableCallGraphPass::runOnFunction(Function *F) {
       for (auto &target : targetList) {
         if (f.find(target.first) != std::string::npos && loc.getLine() == target.second) {
           RA_LOG("Target I: " << *I << "\n");
-          distances[I->getParent()] = 0;
+          distances[I->getParent()] = 0.0;
+          reachableBBs.insert(I->getParent());
         }
       }
     }
