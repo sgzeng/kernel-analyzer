@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <iomanip>
 #include <fstream>
 #include <vector>
 
@@ -491,7 +492,9 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
               f = f.substr(2);
             }
             OS << f << ":" << loc->getLine() << ",";
-            OS << distances[BB] << "\n";
+            std::ostringstream formattedDistance;
+            formattedDistance << std::fixed << std::setprecision(6) << distances[BB] * 1000;
+            OS << formattedDistance.str() << "\n";
             printed = true;
           }
         }
@@ -533,7 +536,9 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
           break;
         }
       }
-      OS << kv.second << "\n";
+      std::ostringstream formattedDistance;
+      formattedDistance << std::fixed << std::setprecision(6) << kv.second * 1000;
+      OS << formattedDistance.str() << "\n";
     }
   }
 
