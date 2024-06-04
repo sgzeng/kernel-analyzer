@@ -522,23 +522,29 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
   } else {
     for (const auto &kv : distances) {
       BasicBlock *BB = kv.first;
-      for (auto &I : *BB) {
-        auto &loc = I.getDebugLoc();
-        if (loc && loc->getLine() != 0) {
-          auto f = loc->getFilename();
-          if (f.empty()) {
-            f = BB->getParent()->getParent()->getSourceFileName();
-          }
-          if (f.find("./") == 0) {
-            f = f.substr(2);
-          }
-          OS << f << ":" << loc->getLine() << ",";
-          break;
-        }
+      auto term = BB->getTerminator();
+      auto branch = dyn_cast<BranchInst>(term);
+      if (!branch || !branch->isConditional())
+        continue;
+      auto TT = branch->getSuccessor(0);
+      auto FT = branch->getSuccessor(1);
+      OS << getBasicBlockId(BB) << ",";
+      auto itr = distances.find(FT);
+      if (itr != distances.end()) {
+        std::ostringstream formattedDistance;
+        formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
+        OS << formattedDistance.str() << ",";
+      } else {
+        OS << "inf,";
       }
-      std::ostringstream formattedDistance;
-      formattedDistance << std::fixed << std::setprecision(6) << kv.second * 1000;
-      OS << formattedDistance.str() << "\n";
+      itr = distances.find(TT);
+      if (itr != distances.end()) {
+        std::ostringstream formattedDistance;
+        formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
+        OS << formattedDistance.str() << "\n";
+      } else {
+        OS << "inf\n";
+      }
     }
   }
 

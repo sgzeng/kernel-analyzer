@@ -22,6 +22,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/Transforms/Utils/Local.h>
+#include "llvm/Support/DJB.h"
 
 #include "Annotation.h"
 #include "Flags.h"
@@ -515,3 +516,58 @@ std::string getAnnotation(Value *V, Module *M) {
   return std::string();
 }
 
+static inline void getInsDebugLoc(const Instruction *I, StringRef &Filename,
+                                  unsigned &Line, unsigned &Col) {
+  if (DILocation *Loc = I->getDebugLoc()) {
+    Line = Loc->getLine();
+    Filename = Loc->getFilename();
+    Col = Loc->getColumn();
+    if (Filename.empty()) {
+      DILocation *oDILoc = Loc->getInlinedAt();
+      if (oDILoc) {
+        Line = oDILoc->getLine();
+        Col = oDILoc->getColumn();
+        Filename = oDILoc->getFilename();
+      }
+    }
+  }
+}
+
+
+static inline void getBBDebugLoc(const BasicBlock *BB, std::string &Filename, unsigned &Line, unsigned &Col) {
+  std::string bb_name("");
+  StringRef filename;
+  unsigned line = 0;
+  unsigned col = 0;
+  for (auto &I : *BB) {
+    getInsDebugLoc(&I, filename, line, col);
+    if (filename.empty() || line == 0 || filename.startswith("/usr/"))
+      continue;
+    std::size_t found = filename.find_last_of("/\\");
+    if (found != std::string::npos)
+      filename = filename.substr(found + 1);
+    Filename = filename.str();
+    Line = line;
+    Col = col;
+    break;
+  }
+}
+
+uint32_t getBasicBlockId(BasicBlock *BB) {
+  static uint32_t unamed = 0;
+  std::string bb_name_with_col("");
+  std::string filename;
+  unsigned line = 0;
+  unsigned col = 0;
+  getBBDebugLoc(BB, filename, line, col);
+  if (!filename.empty() && line != 0 ) {
+    bb_name_with_col = filename + ":" + std::to_string(line) + ":" + std::to_string(col);
+  } else {
+    filename = BB->getParent()->getParent()->getSourceFileName();
+    std::size_t found = filename.find_last_of("/\\");
+    if (found != std::string::npos)
+      filename = filename.substr(found + 1);
+    bb_name_with_col = filename + ":unamed:" + std::to_string(unamed++);
+  }
+  return djbHash(bb_name_with_col);
+}

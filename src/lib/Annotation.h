@@ -183,5 +183,6 @@ extern std::string getStoreId(llvm::StoreInst *SI);
 extern std::string getAnonStructId(llvm::Value *V, llvm::Module *M, llvm::StringRef Prefix);
 extern std::string getStructId(llvm::Value *PV, llvm::User::op_iterator &IS, llvm::User::op_iterator &IE,
                                llvm::Module *M);
+extern uint32_t getBasicBlockId(llvm::BasicBlock *BB);
 
 #endif
