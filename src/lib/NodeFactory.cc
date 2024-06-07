@@ -118,7 +118,7 @@ NodeIndex AndersNodeFactory::getValueNodeFor(const Value* val) {
             return getValueNodeForConstant(c);
 
     if (const GlobalVariable *globalVar = dyn_cast<GlobalVariable>(val)) {
-        auto itr = gobjMap->find(globalVar->getName().str());
+        auto itr = gobjMap->find(globalVar->getGUID());
         if (itr != gobjMap->end()) {
             auto obj = itr->second;
             if (obj->isDeclaration()) return getUniversalPtrNode();
@@ -126,7 +126,7 @@ NodeIndex AndersNodeFactory::getValueNodeFor(const Value* val) {
         }
     }
     // else if (const Function *func = dyn_cast<Function>(val)) {
-    //     auto itr = funcMap->find(func->getName().str());
+    //     auto itr = funcMap->find(func->getGUID());
     //     if (itr != funcMap->end())
     //         val = itr->second;
     // }
@@ -216,11 +216,11 @@ NodeIndex AndersNodeFactory::getObjectNodeFor(const Value* val) {
             return getObjectNodeForConstant(c);
 
     if (const GlobalVariable *globalVar = dyn_cast<GlobalVariable>(val)) {
-        auto itr = gobjMap->find(globalVar->getName().str());
+        auto itr = gobjMap->find(globalVar->getGUID());
         if (itr != gobjMap->end())
             val = itr->second;
     } else if (const Function *func = dyn_cast<Function>(val)) {
-        auto itr = funcMap->find(func->getName().str());
+        auto itr = funcMap->find(func->getGUID());
         if (itr != funcMap->end())
             val = itr->second;
     }
@@ -274,7 +274,7 @@ NodeIndex AndersNodeFactory::getObjectNodeForConstant(const llvm::Constant* c) {
 }
 
 NodeIndex AndersNodeFactory::getReturnNodeFor(const llvm::Function* f) {
-    auto rf = funcMap->find(f->getName().str());
+    auto rf = funcMap->find(f->getGUID());
     if (rf != funcMap->end())
         f = rf->second;
     auto itr = returnMap.find(f);
@@ -315,7 +315,7 @@ unsigned AndersNodeFactory::constGEPtoFieldNum(const llvm::ConstantExpr* expr) c
                 assert(offset >= 0 && "constexpr char* offset should be non-negative!");
                 auto ptr = dyn_cast<GlobalVariable>(GEP->getPointerOperand()->stripPointerCasts());
                 assert(ptr && "const gep expr ptr should be a global variable!");
-                auto itr = gobjMap->find(ptr->getName().str());
+                auto itr = gobjMap->find(ptr->getGUID());
                 if (itr != gobjMap->end())
                     ptr = itr->second;
                 auto itr2 = objNodeMap.find(ptr);

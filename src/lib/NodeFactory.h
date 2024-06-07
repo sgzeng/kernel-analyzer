@@ -14,7 +14,8 @@
 
 #include <vector>
 #include <set>
-#include <unordered_map>
+
+#include <boost/unordered/unordered_flat_map.hpp>
 
 //List propagation: propagate callee's arg lists to caller's arg lists
 //#define ListProp
@@ -25,8 +26,8 @@
 // Ordinary clients are not allowed to create AndersNode objects. To guarantee index consistency,
 // AndersNodes (and its subclasses) instances should only be created through AndersNodeFactory.
 typedef unsigned NodeIndex;
-typedef std::unordered_map<std::string, llvm::Function*> FuncMap;
-typedef std::unordered_map<std::string, llvm::GlobalVariable*> GObjMap;
+typedef boost::unordered_flat_map<uint64_t, llvm::Function*> FuncMap;
+typedef boost::unordered_flat_map<uint64_t, llvm::GlobalVariable*> GObjMap;
 
 class AndersNode {
 public:

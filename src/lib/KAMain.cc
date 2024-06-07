@@ -4,7 +4,7 @@
  * Copyright (C) 2012 Xi Wang, Haogang Chen, Nickolai Zeldovich
  * Copyright (C) 2015 Byoungyoung Lee
  * Copyright (C) 2016 Kangjie Lu
- * Copyright (C) 2015 - 2023 Chengyu Song 
+ * Copyright (C) 2015 - 2024 Chengyu Song
  *
  * For licensing details see LICENSE
  */
@@ -114,12 +114,12 @@ void doBasicInitialization(Module *M) {
   // collect global object definitions
   for (GlobalVariable &GV : M->globals()) {
     if (GV.hasExternalLinkage()) {
-      std::string GVName = GV.getName().str();
+      auto GVID = GV.getGUID();
       if (!GV.isDeclaration()) {
-        assert(GlobalCtx.Gobjs.count(GVName) == 0);
-        GlobalCtx.Gobjs[GVName] = &GV;
+        assert(GlobalCtx.Gobjs.count(GVID) == 0);
+        GlobalCtx.Gobjs[GVID] = &GV;
       } else {
-        GlobalCtx.ExtGobjs[GVName] = &GV;
+        GlobalCtx.ExtGobjs[GVID] = &GV;
       }
     }
   }
@@ -128,12 +128,12 @@ void doBasicInitialization(Module *M) {
   for (Function &F : *M) {
     if (F.hasExternalLinkage()) {
       // external linkage always ends up with the function name
-      std::string FName = F.getName().str();
+      auto FID = F.getGUID();
       if (!F.isDeclaration() && !F.empty()) {
-        assert(GlobalCtx.Funcs.count(FName) == 0);
-        GlobalCtx.Funcs[FName] = &F;
+        assert(GlobalCtx.Funcs.count(FID) == 0);
+        GlobalCtx.Funcs[FID] = &F;
       } else {
-        GlobalCtx.ExtFuncs[FName] = &F;
+        GlobalCtx.ExtFuncs[FID] = &F;
       }
     }
   }
@@ -191,7 +191,7 @@ int main(int argc, char **argv) {
   for (auto &[name, f] : GlobalCtx.Funcs) { GlobalCtx.ExtFuncs.erase(name); }
 
   // initialize nodefactory
-  //populateNodeFactory(GlobalCtx);
+  populateNodeFactory(GlobalCtx);
 
   // Main workflow
   CallGraphPass CGPass(&GlobalCtx);

@@ -32,7 +32,7 @@
 using namespace llvm;
 
 Function* CallGraphPass::getFuncDef(Function *F) {
-  FuncMap::iterator it = Ctx->Funcs.find(F->getName().str());
+  FuncMap::iterator it = Ctx->Funcs.find(F->getGUID());
   if (it != Ctx->Funcs.end())
     return it->second;
   else
@@ -42,10 +42,8 @@ Function* CallGraphPass::getFuncDef(Function *F) {
 bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
   if (T1 == T2) {
       return true;
-#if LLVM_VERSION_MAJOR > 9
   } else if (T1->isVoidTy()) {
     return T2->isVoidTy();
-#endif
   } else if (T1->isIntegerTy()) {
     // assume pointer can be cased to the address space size
     if (T2->isPointerTy() && T1->getIntegerBitWidth() == T2->getPointerAddressSpace())
@@ -139,11 +137,7 @@ bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
 }
 
 bool CallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
-#if LLVM_VERSION_MAJOR > 10
     CallBase &CS = *CI;
-#else
-    CallSite CS(CI);
-#endif
     //errs() << *CI << "\n";
     for (const Function *F : Ctx->AddressTakenFuncs) {
 
@@ -187,11 +181,7 @@ bool CallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
     return false;
 }
 
-#if LLVM_VERSION_MAJOR > 10
 bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF) {
-#else
-bool CallGraphPass::handleCall(llvm::CallInst *CS, const llvm::Function *CF) {
-#endif
   if (CF->isIntrinsic())
     return false;
 
@@ -331,14 +321,9 @@ bool CallGraphPass::runOnFunction(Function *F) {
       }
       break;
     }
-#if LLVM_VERSION_MAJOR > 10
     case Instruction::Invoke:
     case Instruction::Call: {
       CallBase *CS = cast<CallBase>(I);
-#else
-    case Instruction::Call: {
-      CallInst *CS = cast<CallInst>(I);
-#endif
       if (CS->isInlineAsm()) break;
       if (Function *CF = CS->getCalledFunction()) {
         // direct call
@@ -584,7 +569,7 @@ bool CallGraphPass::doInitialization(Module *M) {
       // only add fval -> fobj edge in call graph analysis?
       NodeIndex valNode = NF.createValueNode(&F);
       NodeIndex objNode = AndersNodeFactory::InvalidIndex;
-      if (Ctx->ExtFuncs.find(F.getName().str()) != Ctx->ExtFuncs.end()) {
+      if (Ctx->ExtFuncs.find(F.getGUID()) != Ctx->ExtFuncs.end()) {
         // external function, no object node, create one
         objNode = NF.createObjectNode(&F);
       } else {
@@ -702,11 +687,7 @@ void CallGraphPass::dumpCallees() {
         // }
         // OS << "\n";
         if (v.empty()) {
-#if LLVM_VERSION_MAJOR > 10
             OS << "!!EMPTY =>" << *CI->getCalledOperand()<<"\n";
-#else
-            OS << "!!EMPTY =>" << *CI->getCalledValue()<<"\n";
-#endif
             OS<< "Uninitialized function pointer is dereferenced!\n";
         }
     }

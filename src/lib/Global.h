@@ -20,32 +20,24 @@
 #include <sstream>
 #include <string>
 
+#include <boost/unordered/unordered_flat_map.hpp>
+
 #include "Common.h"
 #include "StructAnalyzer.h"
 #include "NodeFactory.h"
 
 typedef std::vector< std::pair<llvm::Module*, llvm::StringRef> > ModuleList;
 typedef std::unordered_map<llvm::Module*, llvm::StringRef> ModuleMap;
-typedef std::unordered_map<std::string, llvm::Function*> FuncMap;
-typedef std::unordered_map<std::string, llvm::GlobalVariable*> GObjMap;
 
-#if LLVM_VERSION_MAJOR > 10
 typedef llvm::SmallPtrSet<llvm::CallBase*, 8> CallInstSet;
-#else
-typedef llvm::SmallPtrSet<llvm::CallInst*, 8> CallInstSet;
-#endif
 typedef llvm::SmallPtrSet<const llvm::Function*, 8> FuncSet;
 typedef std::unordered_map<NodeIndex, FuncSet> FuncPtrMap;
 
 typedef llvm::DenseMap<const llvm::Function*, CallInstSet> CallerMap;
-#if LLVM_VERSION_MAJOR > 10
 typedef llvm::DenseMap<llvm::CallBase*, FuncSet> CalleeMap;
-#else
-typedef llvm::DenseMap<llvm::CallInst*, FuncSet> CalleeMap;
-#endif
 
-typedef std::unordered_map<std::size_t, AndersPtsSet> PtsGraph;
-typedef std::unordered_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;
+typedef boost::unordered_flat_map<std::size_t, AndersPtsSet> PtsGraph;
+typedef boost::unordered_flat_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;
 
 class GlobalContext {
 private:
