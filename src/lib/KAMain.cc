@@ -187,8 +187,8 @@ int main(int argc, char **argv) {
   }
 
   // one more preprocessing to clear defined global variables and functions
-  for (auto &[name, gv] : GlobalCtx.Gobjs) { GlobalCtx.ExtGobjs.erase(name); }
-  for (auto &[name, f] : GlobalCtx.Funcs) { GlobalCtx.ExtFuncs.erase(name); }
+  for (auto &[id, gv] : GlobalCtx.Gobjs) { GlobalCtx.ExtGobjs.erase(id); }
+  for (auto &[id, f] : GlobalCtx.Funcs) { GlobalCtx.ExtFuncs.erase(id); }
 
   // initialize nodefactory
   populateNodeFactory(GlobalCtx);
