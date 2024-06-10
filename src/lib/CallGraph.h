@@ -30,19 +30,19 @@ private:
   CalleeMap calleeByType;
 
 public:
-    CallGraphPass(GlobalContext *Ctx_)
-        : IterativeModulePass(Ctx_, "CallGraph"),
-          NF(Ctx->nodeFactory), SA(Ctx->structAnalyzer),
-          funcPtsGraph(Ctx->GlobalInitPtsGraph) // copy the init graph
-          { }
-    virtual bool doInitialization(llvm::Module *);
-    virtual bool doFinalization(llvm::Module *);
-    virtual bool doModulePass(llvm::Module *);
+  CallGraphPass(GlobalContext *Ctx_)
+      : IterativeModulePass(Ctx_, "CallGraph"),
+        NF(Ctx->nodeFactory), SA(Ctx->structAnalyzer),
+        funcPtsGraph(Ctx->GlobalInitPtsGraph) // copy the init graph
+        { }
+  virtual bool doInitialization(llvm::Module *);
+  virtual bool doFinalization(llvm::Module *);
+  virtual bool doModulePass(llvm::Module *);
 
-    // debug
-    void dumpFuncPtrs(llvm::raw_ostream &OS);
-    void dumpCallees();
-    void dumpCallers();
+  // debug
+  void dumpFuncPtrs(llvm::raw_ostream &OS);
+  void dumpCallees();
+  void dumpCallers();
 };
 
 #endif
