@@ -2,7 +2,7 @@
  * Andersen NodeFactory
  *
  * Copyright (C) 2015 Jia Chen
- * Copyright (C) 2015 - 2019 Chengyu Song
+ * Copyright (C) 2015 - 2024 Chengyu Song
  *
  * For licensing details see LICENSE
  */
@@ -118,11 +118,14 @@ NodeIndex AndersNodeFactory::getValueNodeFor(const Value* val) {
             return getValueNodeForConstant(c);
 
     if (const GlobalVariable *globalVar = dyn_cast<GlobalVariable>(val)) {
-        auto itr = gobjMap->find(globalVar->getGUID());
+        auto GID = globalVar->getGUID();
+        auto itr = gobjMap->find(GID);
         if (itr != gobjMap->end()) {
             auto obj = itr->second;
-            if (obj->isDeclaration()) return getUniversalPtrNode();
-            else val = obj;
+            val = obj;
+        } else if (extGobjMap->find(GID) != extGobjMap->end()) {
+            // XXX: return universal ptr?
+            return getUniversalPtrNode();
         }
     }
     // else if (const Function *func = dyn_cast<Function>(val)) {
@@ -216,13 +219,25 @@ NodeIndex AndersNodeFactory::getObjectNodeFor(const Value* val) {
             return getObjectNodeForConstant(c);
 
     if (const GlobalVariable *globalVar = dyn_cast<GlobalVariable>(val)) {
-        auto itr = gobjMap->find(globalVar->getGUID());
-        if (itr != gobjMap->end())
+        auto GID = globalVar->getGUID();
+        auto itr = gobjMap->find(GID);
+        if (itr != gobjMap->end()) {
             val = itr->second;
+        } else {
+            itr = extGobjMap->find(GID);
+            if (itr != extGobjMap->end())
+                val = itr->second;
+        }
     } else if (const Function *func = dyn_cast<Function>(val)) {
-        auto itr = funcMap->find(func->getGUID());
-        if (itr != funcMap->end())
+        auto FID = func->getGUID();
+        auto itr = funcMap->find(FID);
+        if (itr != funcMap->end()) {
             val = itr->second;
+        } else {
+            itr = extFuncMap->find(FID);
+            if (itr != extFuncMap->end())
+                val = itr->second;
+        }
     }
 
     auto itr = objNodeMap.find(val);
@@ -274,9 +289,13 @@ NodeIndex AndersNodeFactory::getObjectNodeForConstant(const llvm::Constant* c) {
 }
 
 NodeIndex AndersNodeFactory::getReturnNodeFor(const llvm::Function* f) {
-    auto rf = funcMap->find(f->getGUID());
+    auto FID = f->getGUID();
+    auto rf = funcMap->find(FID);
     if (rf != funcMap->end())
         f = rf->second;
+    else if (extFuncMap->find(FID) != extFuncMap->end())
+        // XXX: return universal ptr?
+        return getUniversalPtrNode();
     auto itr = returnMap.find(f);
     if (itr == returnMap.end())
         return InvalidIndex;
@@ -315,9 +334,15 @@ unsigned AndersNodeFactory::constGEPtoFieldNum(const llvm::ConstantExpr* expr) c
                 assert(offset >= 0 && "constexpr char* offset should be non-negative!");
                 auto ptr = dyn_cast<GlobalVariable>(GEP->getPointerOperand()->stripPointerCasts());
                 assert(ptr && "const gep expr ptr should be a global variable!");
-                auto itr = gobjMap->find(ptr->getGUID());
-                if (itr != gobjMap->end())
+                auto GID = ptr->getGUID();
+                auto itr = gobjMap->find(GID);
+                if (itr != gobjMap->end()) {
                     ptr = itr->second;
+                } else {
+                    itr = extGobjMap->find(GID);
+                    if (itr != extGobjMap->end())
+                        ptr = itr->second;
+                }
                 auto itr2 = objNodeMap.find(ptr);
                 assert(itr2 != objNodeMap.end() && "const gep expr ptr should have a node!");
                 const Type *ATy = nodes[itr2->second].getAllocationType();

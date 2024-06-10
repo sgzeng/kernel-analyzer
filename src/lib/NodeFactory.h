@@ -87,8 +87,10 @@ private:
     StructAnalyzer* structAnalyzer;
     // Global Object info
     const GObjMap* gobjMap;
+    const GObjMap* extGobjMap;
     // Function info
     const FuncMap* funcMap;
+    const FuncMap* extFuncMap;
 
     // The set of nodes
     std::vector<AndersNode> nodes;
@@ -102,21 +104,21 @@ private:
     static const NodeIndex ConstantIntIndex = 4;
 
     // valueNodeMap - This map indicates the AndersNode* that a particular Value* corresponds to
-    llvm::DenseMap<const llvm::Value*, NodeIndex> valueNodeMap;
+    boost::unordered_flat_map<const llvm::Value*, NodeIndex> valueNodeMap;
 
     // ObjectNodes - This map contains entries for each memory object in the program: globals, alloca's and mallocs.
     // We are able to represent them as llvm::Value* because we're modeling the heap with the simplest allocation-site approach
-    llvm::DenseMap<const llvm::Value*, NodeIndex> objNodeMap;
+    boost::unordered_flat_map<const llvm::Value*, NodeIndex> objNodeMap;
 
     // returnMap - This map contains an entry for each function in the
     // program that returns a ptr.
-    llvm::DenseMap<const llvm::Function*, NodeIndex> returnMap;
+    boost::unordered_flat_map<const llvm::Function*, NodeIndex> returnMap;
 
     // varargMap - This map contains the entry used to represent all pointers
     // passed through the varargs portion of a function call for a particular
     // function.  An entry is not present in this map for functions that do not
     // take variable arguments.
-    llvm::DenseMap<const llvm::Function*, NodeIndex> varargMap;
+    boost::unordered_flat_map<const llvm::Function*, NodeIndex> varargMap;
 
     // gepMap - This map maintains the gep-relations across value nodes.
     // The mappings are of the form <base-ptr, offset> -> gep-ptr,
@@ -135,7 +137,9 @@ public:
     const llvm::DataLayout* getDataLayout() const { return dataLayout; }
     void setStructAnalyzer(StructAnalyzer* s) { structAnalyzer = s; }
     void setGobjMap(const GObjMap* m) { gobjMap = m; }
+    void setExtGobjMap(const GObjMap* m) { extGobjMap = m; }
     void setFuncMap(const FuncMap* m) { funcMap = m; }
+    void setExtFuncMap(const FuncMap* m) { extFuncMap = m; }
 
     // Factory methods
     NodeIndex createValueNode(const llvm::Value* val = NULL);
