@@ -28,6 +28,7 @@
 #include "PointTo.h"
 
 #define CG_LOG(stmt) KA_LOG(2, "CallGraph: " << stmt)
+#define CG_DEBUG(stmt) KA_LOG(3, "CallGraph: " << stmt)
 
 using namespace llvm;
 
@@ -75,7 +76,7 @@ bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
 
     Type *ElT1 = T1->getArrayElementType();
     Type *ElT2 = T2->getArrayElementType();
-    return isCompatibleType(ElT1, ElT1);
+    return isCompatibleType(ElT1, ElT2);
   } else if (T1->isStructTy()) {
     StructType *ST1 = cast<StructType>(T1);
     StructType *ST2 = dyn_cast<StructType>(T2);
@@ -230,6 +231,10 @@ bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF) {
         Value *farg = CF->getArg(i);
         NodeIndex formalNode = NF.getValueNodeFor(farg);
         assert(formalNode != AndersNodeFactory::InvalidIndex && "Formal argument node not found!");
+        // skip arg with type shortcut
+        if (typeShortcutsObj.find(formalNode) != typeShortcutsObj.end()) {
+          continue;
+        }
 #if 0
         for (auto idx = itr->second.find_first(), end = itr->second.getSize();
              idx < end; idx = itr->second.find_next(idx)) {
@@ -254,6 +259,21 @@ bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF) {
     assert(retNode != AndersNodeFactory::InvalidIndex && "Return node not found!");
     NodeIndex callNode = NF.getValueNodeFor(CS);
     assert(callNode != AndersNodeFactory::InvalidIndex && "Call node not found!");
+    // // try apply type shortcuts first
+    // Type *retTy = CF->getReturnType();
+    // if (PointerType *ptrTy = dyn_cast<PointerType>(retTy)) {
+    //   Type *ElTy = ptrTy->getElementType();
+    //   if (ElTy->isStructTy()) {
+    //     const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), CS->getModule());
+    //     auto itr = typeShortcuts.find(stInfo);
+    //     if (itr != typeShortcuts.end()) {
+    //       Changed |= funcPtsGraph[callNode].insert(itr->second);
+    //       CG_LOG("Ret: apply type shortcut: " << itr->second << "\n");
+    //       return Changed;
+    //     }
+    //   }
+    // }
+    // fall back to the normal handling
     auto itr = funcPtsGraph.find(retNode);
     if (itr != funcPtsGraph.end()) {
       // if the point2 set of the return is not empty
@@ -293,6 +313,26 @@ bool CallGraphPass::runOnFunction(Function *F) {
 
   CG_LOG("######\nProcessing Func: " << F->getName() << "\n");
 
+  // for (auto &A : F->args()) {
+  //   Argument *arg = &A;
+  //   NodeIndex argNode = NF.getValueNodeFor(arg);
+  //   assert(argNode != AndersNodeFactory::InvalidIndex && "Argument node not found!");
+  //   // try apply type shortcuts
+  //   Type *argTy = arg->getType();
+  //   if (PointerType *ptrTy = dyn_cast<PointerType>(argTy)) {
+  //     Type *ElTy = ptrTy->getElementType();
+  //     if (ElTy->isStructTy()) {
+  //       const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), F->getParent());
+  //       auto itr = typeShortcuts.find(stInfo);
+  //       if (itr != typeShortcuts.end()) {
+  //         // funcPtsGraph[argNode].clear(); // remove all existing points-to
+  //         funcPtsGraph[argNode].insert(itr->second);
+  //         CG_LOG("Arg: apply type shortcut: " << itr->second << "\n");
+  //       }
+  //     }
+  //   }
+  // }
+
   for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
     Instruction *I = &*i;
 
@@ -301,18 +341,22 @@ bool CallGraphPass::runOnFunction(Function *F) {
         isa<TruncInst>(I) || isa<ICmpInst>(I) || isa<FCmpInst>(I))
       continue;
 
-    CG_LOG("Processing instruction: " << *I << "\n");
+    CG_DEBUG("Processing instruction: " << *I << "\n");
     switch (I->getOpcode()) {
     case Instruction::Ret: {
       if (I->getNumOperands() > 0) {
         Value *rv = I->getOperand(0);
         NodeIndex rvNode = NF.getValueNodeFor(rv);
         assert(rvNode != AndersNodeFactory::InvalidIndex && "Return value node not found!");
+        NodeIndex RT = NF.getReturnNodeFor(F);
+        assert(RT != AndersNodeFactory::InvalidIndex && "Return node not found!");
+        // skip for type shortcut
+        if (typeShortcutsObj.find(RT) != typeShortcutsObj.end()) {
+          break;
+        }
         auto itr = funcPtsGraph.find(rvNode);
         if (itr != funcPtsGraph.end()) {
           // if the point2 set of the return value is not empty
-          NodeIndex RT = NF.getReturnNodeFor(F);
-          assert(RT != AndersNodeFactory::InvalidIndex && "Return node not found!");
           if (funcPtsGraph[RT].insert(itr->second) > 0) {
             CG_LOG("Ret: " << *I << " <- " << F->getName() << "\n");
             Changed = true;
@@ -350,16 +394,23 @@ bool CallGraphPass::runOnFunction(Function *F) {
           }
           assert(NF.isObjectNode(idx) && "Function pointer points to non-object!");
           const Value *CV = NF.getValueForNode(idx);
-          assert(CV != NULL && "No value for function node!");
+          if (CV == NULL) {
+            WARNING("No value for function node!\n");
+            continue;
+          }
           Function *CF = dyn_cast<Function>(const_cast<Value*>(CV));
           if (CF == NULL) {
-            KA_ERR("Function pointer " << *CO << " points to non-function: " << *CV << "\n");
+            WARNING("Function pointer " << *CO << " points to non-function: " << *CV << "\n");
+            continue;
           }
           reachable.insert(CF);
           Ctx->Callees[CS].insert(CF);
           CG_LOG("Indirect Call: callee: " << CF->getName() << "\n");
           Changed |= handleCall(CS, CF);
         }
+      } else {
+        CG_LOG("Indirect Call: callee not found in the graph: " << callee << "\n");
+        Changed |= funcPtsObj.insert(callee).second;
       }
       break;
     }
@@ -368,16 +419,31 @@ bool CallGraphPass::runOnFunction(Function *F) {
       break;
     }
     case Instruction::Load: {
+      NodeIndex valNode = NF.getValueNodeFor(I);
+      // try apply type shortcuts first
+      Type *Ty = I->getType();
+      if (PointerType *ptrTy = dyn_cast<PointerType>(Ty)) {
+        Type *ElTy = ptrTy->getElementType();
+        if (ElTy->isStructTy()) {
+          const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), F->getParent());
+          auto itr = typeShortcuts.find(stInfo);
+          if (itr != typeShortcuts.end()) {
+            Changed |= funcPtsGraph[valNode].insert(itr->second);
+            CG_LOG("Load: apply type shortcut: " << itr->second << "\n");
+            break;
+          }
+        }
+      }
+      // normal handling
       bool isNull = false;
       Value *ptr = I->getOperand(0);
       NodeIndex ptrNode = NF.getValueNodeFor(ptr);
-      NodeIndex valNode = NF.getValueNodeFor(I);
       auto itr = funcPtsGraph.find(ptrNode);
       if (itr != funcPtsGraph.end()) {
         // if the point2 set of the source ptr is not empty
         for (auto idx = itr->second.find_first(), end = itr->second.getSize();
              idx < end; idx = itr->second.find_next(idx)) {
-          // for every obj the source ptr points to, propagate the func ptrs
+          // for every obj the source ptr points to, propagate the ptrs
           CG_LOG("Load: source obj: " << idx << "\n");
           if (idx == NF.getNullObjectNode() && itr->second.find_next(idx) == end) {
             CG_LOG("Loading from null obj, ptr = " << ptrNode << "\n");
@@ -402,6 +468,16 @@ bool CallGraphPass::runOnFunction(Function *F) {
           }
         }
       }
+      if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
+        Changed |= funcPtsObj.insert(ptrNode).second;
+        if (Changed) {
+          CG_LOG("Load: source ptr contains func ptr: " << ptrNode << "\n");
+          if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
+            Type *ptrTy = ptr->getType();
+            CG_LOG("Load: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
+          }
+        }
+      }
       break;
     }
     case Instruction::Store: {
@@ -420,13 +496,23 @@ bool CallGraphPass::runOnFunction(Function *F) {
         auto itr2 = funcPtsGraph.find(ptrNode);
         if (itr2 != funcPtsGraph.end()) {
           for (auto idx = itr2->second.find_first(), end = itr2->second.getSize();
-              idx < end; idx = itr2->second.find_next(idx)) {
+               idx < end; idx = itr2->second.find_next(idx)) {
             CG_LOG("Store: dst obj: " << idx << "\n");
             if (NF.isSpecialNode(idx)) {
               WARNING("Store: dst obj is a special node: " << idx << "\n")
               continue;
             }
             Changed |= (funcPtsGraph[idx].insert(itr->second) > 0);
+          }
+        }
+      }
+      if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
+        Changed |= funcPtsObj.insert(ptrNode).second;
+        if (Changed) {
+          CG_LOG("Store: dest ptr contains func ptr: " << ptrNode << "\n");
+          if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
+            Type *ptrTy = ptr->getType();
+            CG_LOG("Store: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
           }
         }
       }
@@ -445,7 +531,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
         for (auto idx = itr->second.find_first(), end = itr->second.getSize();
              idx < end; idx = itr->second.find_next(idx)) {
 
-          CG_LOG("GEP source obj " << idx << "\n");
+          CG_LOG("GEP source obj " << idx << ", end = " << end << "\n");
           if (NF.isSpecialNode(idx)) {
             // special object, e.g., null or univeral
             Changed |= funcPtsGraph[valNode].insert(idx);
@@ -500,16 +586,35 @@ bool CallGraphPass::runOnFunction(Function *F) {
           Changed |= funcPtsGraph[valNode].insert(nidx);
         }
       }
+      if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
+        Changed |= funcPtsObj.insert(ptrNode).second;
+        if (Changed) {
+          CG_LOG("GEP: gep ptr contains func ptr: " << ptrNode << "\n");
+          if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
+            Type *ptrTy = ptr->getType();
+            CG_LOG("GEP: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
+          }
+        }
+      }
       break;
     }
     case Instruction::BitCast: {
       NodeIndex srcNode = NF.getValueNodeFor(I->getOperand(0));
+      NodeIndex dstNode = NF.getValueNodeFor(I);
       assert(srcNode != AndersNodeFactory::InvalidIndex && "Failed to find bitcast src node");
       auto itr = funcPtsGraph.find(srcNode);
       if (itr != funcPtsGraph.end()) {
         // if the point2 set of the source ptr is not empty
-        NodeIndex dstNode = NF.getValueNodeFor(I);
         Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
+      }
+      if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
+        Changed |= funcPtsObj.insert(dstNode).second;
+        if (Changed)
+          CG_LOG("bitcast: src ptr contains func ptr: " << srcNode << ", type = " << *I->getOperand(0)->getType() << "\n");
+      } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
+        Changed |= funcPtsObj.insert(srcNode).second;
+        if (Changed)
+          CG_LOG("bitcast: dst ptr contains func ptr: " << dstNode << ", type = " << *I->getType() << "\n");
       }
       break;
     }
@@ -517,12 +622,22 @@ bool CallGraphPass::runOnFunction(Function *F) {
       PHINode* PHI = cast<PHINode>(I);
       NodeIndex dstNode = NF.getValueNodeFor(PHI);
       for (unsigned i = 0, e = PHI->getNumIncomingValues(); i != e; ++i) {
-        NodeIndex srcNode = NF.getValueNodeFor(PHI->getIncomingValue(i));
+        Value *src = PHI->getIncomingValue(i);
+        NodeIndex srcNode = NF.getValueNodeFor(src);
         assert(srcNode != AndersNodeFactory::InvalidIndex && "Failed to find phi src node");
         auto itr = funcPtsGraph.find(srcNode);
         if (itr != funcPtsGraph.end()) {
           // if the point2 set of the source ptr is not empty
           Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
+        }
+        if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
+          Changed |= funcPtsObj.insert(dstNode).second;
+          if (Changed)
+            CG_LOG("PHI: src ptr contains func ptr: " << srcNode << ", type = " << *src->getType() << "\n");
+        } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
+          Changed |= funcPtsObj.insert(srcNode).second;
+          if (Changed)
+            CG_LOG("PHI: dst ptr contains func ptr: " << dstNode << ", type = " << *PHI->getType() << "\n");
         }
       }
       break;
@@ -530,12 +645,22 @@ bool CallGraphPass::runOnFunction(Function *F) {
     case Instruction::Select: {
       NodeIndex dstNode = NF.getValueNodeFor(I);
       for (unsigned i = 1; i < I->getNumOperands(); i++) {
-        NodeIndex srcNode = NF.getValueNodeFor(I->getOperand(i));
+        Value *src = I->getOperand(i);
+        NodeIndex srcNode = NF.getValueNodeFor(src);
         assert(srcNode != AndersNodeFactory::InvalidIndex && "Failed to find select src node");
         auto itr = funcPtsGraph.find(srcNode);
         if (itr != funcPtsGraph.end()) {
           // if the point2 set of the source ptr is not empty
           Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
+        }
+        if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
+          Changed |= funcPtsObj.insert(dstNode).second;
+          if (Changed)
+            CG_LOG("Select: src ptr contains func ptr: " << srcNode << ", type = " << *src->getType() << "\n");
+        } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
+          Changed |= funcPtsObj.insert(srcNode).second;
+          if (Changed)
+            CG_LOG("Select: dst ptr contains func ptr: " << dstNode << ", type = " << *I->getType() << "\n");
         }
       }
       break;
@@ -568,14 +693,7 @@ bool CallGraphPass::doInitialization(Module *M) {
 
       // only add fval -> fobj edge in call graph analysis?
       NodeIndex valNode = NF.createValueNode(&F);
-      NodeIndex objNode = AndersNodeFactory::InvalidIndex;
-      if (Ctx->ExtFuncs.find(F.getGUID()) != Ctx->ExtFuncs.end()) {
-        // external function, no object node, create one
-        objNode = NF.createObjectNode(&F);
-      } else {
-        // defined function, get the definition
-        objNode = NF.getObjectNodeFor(&F);
-      }
+      NodeIndex objNode = objNode = NF.getObjectNodeFor(&F);
       assert(objNode != AndersNodeFactory::InvalidIndex && "Object node not found!");
       funcPtsGraph[valNode].insert(objNode);
       CG_LOG("AddressTaken: " << F.getName() << " : " << valNode << " -> " << objNode << "\n");
@@ -584,6 +702,33 @@ bool CallGraphPass::doInitialization(Module *M) {
     // reachable?
     if (F.getName().equals("main") || F.getName().startswith("SyS_")) {
       reachable.insert(&F);
+    }
+
+    // type shortcut heuristic?
+    Type *retTy = F.getReturnType();
+    if (PointerType *ptrTy = dyn_cast<PointerType>(retTy)) {
+      Type *ElTy = ptrTy->getElementType();
+      if (ElTy->isStructTy()) {
+        const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), M);
+        if (stInfo) {
+          NodeIndex retNode = NF.getValueNodeFor(&F);
+          retStructs[stInfo].insert(retNode);
+        }
+      }
+    }
+
+    for (auto const &A : F.args()) {
+      Type *argTy = A.getType();
+      if (PointerType *ptrTy = dyn_cast<PointerType>(argTy)) {
+        Type *ElTy = ptrTy->getElementType();
+        if (ElTy->isStructTy()) {
+          const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), M);
+          if (stInfo) {
+            NodeIndex argNode = NF.getValueNodeFor(&A);
+            argStructs[stInfo].insert(argNode);
+          }
+        }
+      }
     }
   }
 
@@ -619,16 +764,104 @@ bool CallGraphPass::doModulePass(Module *M) {
   bool Changed = true, ret = false;
   NF.setModule(M);
   NF.setDataLayout(&M->getDataLayout());
-  while (Changed) {
+
+  // create type shortcut
+  if (typeShortcuts.empty()) {
+    // heuristic: create shortcut for struct ptr used as return value and argument
+    for (auto const &[stInfo, nodes] : retStructs) {
+      auto itr = argStructs.find(stInfo);
+      if (itr != argStructs.end()) {
+        // create obj nodes
+        const StructType *stType = stInfo->getRealType();
+        unsigned stSize = stInfo->getExpandedSize();
+        NodeIndex obj = NF.createObjectNode(nullptr, stType, stInfo->isFieldUnion(0), true);
+        assert(obj != AndersNodeFactory::InvalidIndex && "Failed to create object node!");
+        for (unsigned i = 1; i < stSize; ++i)
+          NF.createObjectNode(obj, i, stInfo->isFieldUnion(i), true);
+        // setup the type shortcut
+        typeShortcuts[stInfo] = obj;
+        CG_LOG("TypeShortcut: " << stType->getName() << " -> " << obj << "\n");
+        // add point2 info
+        for (NodeIndex node : nodes) {
+          funcPtsGraph[node].insert(obj);
+          typeShortcutsObj.insert(node);
+          CG_LOG("TypeShortcut: add ret " << node << " -> " << obj << "\n");
+        }
+        for (NodeIndex node : itr->second) {
+          funcPtsGraph[node].insert(obj);
+          typeShortcutsObj.insert(node);
+          CG_LOG("TypeShortcut: add " << node << " -> " << obj << "\n");
+        }
+      }
+    }
+  }
+
+  // while (Changed)
+  // for (unsigned iter = 0; iter < 2; ++iter)
+  {
     Changed = false;
+
+    // collect func ptr containers
+    for (auto &GV : M->globals()) {
+      // check for function pointers
+      if (!GV.hasInitializer())
+        continue;
+      auto valNode = NF.getValueNodeFor(&GV);
+      if (funcPtsObj.find(valNode) != funcPtsObj.end())
+        continue;
+      auto objNode = NF.getObjectNodeFor(&GV);
+      assert(objNode != AndersNodeFactory::InvalidIndex && "Global object node not found!");
+      auto objSize = NF.getObjectSize(objNode);
+      for (unsigned i = 0; i < objSize; ++i) {
+        // collect function pointers
+        auto field = objNode + i;
+        auto itr = funcPtsGraph.find(field);
+        if (itr == funcPtsGraph.end())
+          continue;
+        // check point2 of each field
+        for (auto idx = itr->second.find_first(), end = itr->second.getSize();
+             idx < end; idx = itr->second.find_next(idx)) {
+          if (NF.isSpecialNode(idx)) {
+            // special object, e.g., null or univeral
+            continue;
+          }
+          auto init = NF.getValueForNode(idx);
+          if (!init) {
+            CG_LOG("GV with idx w/ no value: " << idx << "\n");
+            continue;
+          }
+          auto F = dyn_cast<Function>(init);
+          if (F) {
+            Ctx->FuncPtrs[field].insert(F);
+            if (funcPtsObj.insert(field).second)
+              CG_LOG("Function pointer to " << F->getName() << " assigned to " << field << "\n");
+          } else if (funcPtsObj.find(idx) != funcPtsObj.end()) {
+            funcPtsObj.insert(field);
+          }
+        }
+        // propage from field to obj
+        if (funcPtsObj.find(field) != funcPtsObj.end()) {
+          if (funcPtsObj.insert(objNode).second)
+            CG_LOG("Function pointer found in global " << GV.getName() << "\n");
+        }
+      }
+      if (funcPtsObj.find(objNode) != funcPtsObj.end()) {
+        funcPtsObj.insert(valNode).second;
+      }
+    }
+
+    // process functions
     for (Function &F : *M) {
       if (F.isDeclaration() || F.isIntrinsic() || F.empty())
         continue;
-      if (reachable.find(&F) != reachable.end())
-        Changed |= runOnFunction(&F);
+      // if (reachable.find(&F) != reachable.end())
+      Changed |= runOnFunction(&F);
+      // runOnFunction(&F);
     }
     ret |= Changed;
   }
+
+  // return false;
   return ret;
 }
 
@@ -702,7 +935,7 @@ void CallGraphPass::dumpCallers() {
         RES_REPORT("F : " << getScopeName(F) << "\n");
 
         for (auto *CI : CIS) {
-            Function *CallerF = CI->getParent()->getParent();
+            const Function *CallerF = CI->getParent()->getParent();
             RES_REPORT("\t");
             if (CallerF && CallerF->hasName()) {
                 RES_REPORT("(" << getScopeName(CallerF) << ") ");

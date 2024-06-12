@@ -23,9 +23,16 @@ private:
   StructAnalyzer &SA;
   PtsGraph funcPtsGraph;
 
+  using node_set_t = std::unordered_set<NodeIndex>;
+
   std::unordered_set<const llvm::Value*> funcPts; // values that may reach a fptr
-  std::unordered_set<NodeIndex> funcPtsObj; // objects that may reach a fptr
+  node_set_t funcPtsObj; // objects that may reach a fptr
   std::unordered_set<llvm::Function*> reachable; // reachable from main
+
+  std::unordered_map<const StructInfo*, node_set_t> retStructs; // structs returned by functions
+  std::unordered_map<const StructInfo*, node_set_t> argStructs; // structs passed as arguments
+  std::unordered_map<const StructInfo*, NodeIndex> typeShortcuts;
+  node_set_t typeShortcutsObj;
 
   CalleeMap calleeByType;
 
