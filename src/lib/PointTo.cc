@@ -288,7 +288,7 @@ static NodeIndex createNodeForHeapObject(const Instruction *I, int SizeArg, int 
 
 static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
                                AndersNodeFactory &nodeFactory,
-                               PtsGraph &ptsGraph, GlobalContext &Ctx) {
+                               PtsGraph &ptsGraph) {
 
   assert(obj != AndersNodeFactory::InvalidIndex && "Invalid node index for global object");
 
@@ -300,7 +300,7 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
   if (ConstantArray *CA = dyn_cast<ConstantArray>(init)) {
     // array, always collapse, process element by element
     for (unsigned i = 0; i != CA->getNumOperands(); ++i)
-      processInitializer(obj, objTy, CA->getOperand(i), nodeFactory, ptsGraph, Ctx);
+      processInitializer(obj, objTy, CA->getOperand(i), nodeFactory, ptsGraph);
   } else if (ConstantStruct *CS = dyn_cast<ConstantStruct>(init)) {
     // handle struct type specially, could be tricky because of type mismatch
     // GV could be allocated using the used type (see createNodeForGlobals)
@@ -318,13 +318,13 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
         auto elemSize = dataLayout->getTypeAllocSize(elemTy);
         if (elemSize % objSize == 0) {
           // element size is a multiple of object size, use base type
-          processInitializer(obj, objTy, CS->getOperand(i), nodeFactory, ptsGraph, Ctx);
+          processInitializer(obj, objTy, CS->getOperand(i), nodeFactory, ptsGraph);
         } else {
           // we could be looking at a sub-field
           assert(STy != NULL && "Struct initializer for non-struct type");
           NodeIndex field = nodeFactory.getOffsetObjectNode(obj, j);
           assert(field != AndersNodeFactory::InvalidIndex && "Invalid node index for field");
-          processInitializer(field, STy->getElementType(j), CS->getOperand(i), nodeFactory, ptsGraph, Ctx);
+          processInitializer(field, STy->getElementType(j), CS->getOperand(i), nodeFactory, ptsGraph);
           // advance to next field if not array type
           if (!elemTy->isArrayTy()) ++j;
         }
@@ -338,20 +338,20 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
           elemTy = arrayType->getElementType();
         NodeIndex field = nodeFactory.getOffsetObjectNode(obj, i);
         assert(field != AndersNodeFactory::InvalidIndex && "Invalid node index for field");
-        processInitializer(field, elemTy, CS->getOperand(i), nodeFactory, ptsGraph, Ctx);
+        processInitializer(field, elemTy, CS->getOperand(i), nodeFactory, ptsGraph);
       }
     }
   } else if (ConstantVector *CV = dyn_cast<ConstantVector>(init)) {
     // FIXME: handle vector type
     // for (unsigned i = 0; i != CV->getNumOperands(); ++i)
-    //   processInitializer(obj, objTy, CV->getOperand(i), nodeFactory, ptsGraph, Ctx);
+    //   processInitializer(obj, objTy, CV->getOperand(i), nodeFactory, ptsGraph);
     WARNING("Unhandled vector initializer: " << *init << "\n");
   } else if (ConstantAggregateZero *CAZ = dyn_cast<ConstantAggregateZero>(init)) {
     // zero initializer
     Type *Ty = CAZ->getType();
     if (isa<ArrayType>(Ty) || isa<VectorType>(Ty)) {
       // array or vector, process element only once
-      processInitializer(obj, objTy, CAZ->getSequentialElement(), nodeFactory, ptsGraph, Ctx);
+      processInitializer(obj, objTy, CAZ->getSequentialElement(), nodeFactory, ptsGraph);
     } else {
       StructType *CSTy = dyn_cast<StructType>(Ty);
       assert(CSTy != NULL && "Invalid zero initializer type");
@@ -367,7 +367,7 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
           elem = cast<ConstantAggregateZero>(elem)->getSequentialElement();
         }
         NodeIndex field = nodeFactory.getOffsetObjectNode(obj, i);
-        processInitializer(field, elemTy, elem, nodeFactory, ptsGraph, Ctx);
+        processInitializer(field, elemTy, elem, nodeFactory, ptsGraph);
       }
     }
   } else {
@@ -379,22 +379,10 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
       NodeIndex objNode = nodeFactory.getObjectNodeFor(init); // already handles name to def mapping
       assert(objNode != AndersNodeFactory::InvalidIndex && "Invalid node index for global variable");
       ptsGraph[obj].insert(objNode);
-      // check for function pointers
-      auto objSize = nodeFactory.getObjectSize(objNode);
-      for (unsigned i = 0; i < objSize; ++i) {
-        if (Ctx.FuncPtrs.find(objNode + i) != Ctx.FuncPtrs.end()) {
-          PT_LOG("Function pointer found in global " << init->getName() << "\n");
-          Ctx.FuncPtrs[obj].insert(Ctx.FuncPtrs[objNode + i].begin(), Ctx.FuncPtrs[objNode + i].end());
-        }
-      }
     } else if (isa<Function>(init)) {
       NodeIndex objNode = nodeFactory.getObjectNodeFor(init); // already handles name to def mapping
       assert(objNode != AndersNodeFactory::InvalidIndex && "Invalid node index for function");
       ptsGraph[obj].insert(objNode);
-      // collect function pointers
-      auto FP = cast<Function>(nodeFactory.getValueForNode(objNode));
-      Ctx.FuncPtrs[obj].insert(FP);
-      PT_LOG("Function pointer to " << FP->getName() << " assigned to " << obj << "\n");
     } else if (isa<ConstantExpr>(init)) {
       ConstantExpr *CE = cast<ConstantExpr>(init);
       switch (CE->getOpcode()) {
@@ -406,7 +394,7 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
         }
         case Instruction::BitCast: {
           // BitCast, process the operand
-          processInitializer(obj, objTy, CE->getOperand(0), nodeFactory, ptsGraph, Ctx);
+          processInitializer(obj, objTy, CE->getOperand(0), nodeFactory, ptsGraph);
           break;
         }
         // case Instruction::IntToPtr: {
@@ -480,6 +468,7 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
               if (isAllocFn(CF->getName(), &size, &flag)) {
                 NodeIndex obj = createNodeForHeapObject(CI, size, flag, nodeFactory, structAnalyzer);
                 ptsGraph[valNode].insert(obj);
+                GlobalCtx.AllocSites.insert(CI);
               }
             }
             break;
@@ -511,7 +500,7 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
         NodeIndex obj = nodeFactory.getObjectNodeFor(&GV);
         const Type *Ty = nodeFactory.getObjectType(obj);
         //PT_LOG("Processing initializer for global " << GV.getName() << " type " << *Ty << " with " << *GV.getInitializer() << "\n");
-        processInitializer(obj, Ty, GV.getInitializer(), nodeFactory, ptsGraph, GlobalCtx);
+        processInitializer(obj, Ty, GV.getInitializer(), nodeFactory, ptsGraph);
       }
     }
   }

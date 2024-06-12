@@ -29,12 +29,12 @@
 typedef std::vector< std::pair<llvm::Module*, llvm::StringRef> > ModuleList;
 typedef std::unordered_map<llvm::Module*, llvm::StringRef> ModuleMap;
 
-typedef llvm::SmallPtrSet<llvm::CallBase*, 8> CallInstSet;
+typedef llvm::SmallPtrSet<const llvm::CallBase*, 8> CallInstSet;
 typedef llvm::SmallPtrSet<const llvm::Function*, 8> FuncSet;
 typedef std::unordered_map<NodeIndex, FuncSet> FuncPtrMap;
 
 typedef llvm::DenseMap<const llvm::Function*, CallInstSet> CallerMap;
-typedef llvm::DenseMap<llvm::CallBase*, FuncSet> CalleeMap;
+typedef llvm::DenseMap<const llvm::CallBase*, FuncSet> CalleeMap;
 
 typedef boost::unordered_flat_map<std::size_t, AndersPtsSet> PtsGraph;
 typedef boost::unordered_flat_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;
@@ -91,7 +91,10 @@ public:
   CallerMap Callers;
 
   // Indirect call instructions
-  std::vector<CallInst *>IndirectCallInsts;
+  std::vector<CallInst*> IndirectCallInsts;
+
+  // Allocation sites
+  CallInstSet AllocSites;
 
   // A factory object that knows how to manage AndersNodes
   AndersNodeFactory nodeFactory;
