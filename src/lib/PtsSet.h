@@ -65,11 +65,14 @@ public:
   // const_iterator end() const { return _bitvec.end(); }
 
   std::size_t find_first() const {
+    if (_bitvec.empty()) return -1;
     return std::find(_bitvec.begin(), _bitvec.end(), true) - _bitvec.begin();
   }
 
   std::size_t find_next(std::size_t last) const {
-    return std::find(_bitvec.begin() + last + 1, _bitvec.end(), true) - _bitvec.begin();
+    if (_bitvec.empty()) return -1;
+    auto ret = (std::find(_bitvec.begin() + last + 1, _bitvec.end(), true) - _bitvec.begin());
+    return ret == 0 ? _bitvec.size() : ret;
   }
 };
 
