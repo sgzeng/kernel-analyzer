@@ -18,6 +18,7 @@
 using namespace llvm;
 
 #define SA_LOG(stmt) KA_LOG(2, "StructAnalyzer: " << stmt)
+#define SA_DEBUG(stmt) KA_LOG(3, "StructAnalyzer: " << stmt)
 
 // Initialize max struct info
 const StructType* StructInfo::maxStruct = NULL;
@@ -168,14 +169,14 @@ void StructAnalyzer::run(Module* M, const DataLayout* layout)
   for (const auto &st : usedStructTypes) {
     // handle non-literal first
     if (st->isLiteral()) {
-      // SA_LOG("Process literal struct " << *st << "\n");
+      // SA_DEBUG("Process literal struct " << *st << "\n");
       addStructInfo(st, M, layout);
       continue;
     }
 
     // only add non-opaque type
     if (!st->isOpaque()) {
-      SA_LOG("Process struct " << getScopeName(st, M) << "\n");
+      SA_DEBUG("Process struct " << getScopeName(st, M) << "\n");
       // process new struct only
       if (structMap.insert(std::make_pair(getScopeName(st, M), st)).second) {
         auto &stInfo = addStructInfo(st, M, layout);
