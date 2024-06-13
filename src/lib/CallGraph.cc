@@ -259,21 +259,6 @@ bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF) {
     assert(retNode != AndersNodeFactory::InvalidIndex && "Return node not found!");
     NodeIndex callNode = NF.getValueNodeFor(CS);
     assert(callNode != AndersNodeFactory::InvalidIndex && "Call node not found!");
-    // // try apply type shortcuts first
-    // Type *retTy = CF->getReturnType();
-    // if (PointerType *ptrTy = dyn_cast<PointerType>(retTy)) {
-    //   Type *ElTy = ptrTy->getElementType();
-    //   if (ElTy->isStructTy()) {
-    //     const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), CS->getModule());
-    //     auto itr = typeShortcuts.find(stInfo);
-    //     if (itr != typeShortcuts.end()) {
-    //       Changed |= funcPtsGraph[callNode].insert(itr->second);
-    //       CG_LOG("Ret: apply type shortcut: " << itr->second << "\n");
-    //       return Changed;
-    //     }
-    //   }
-    // }
-    // fall back to the normal handling
     auto itr = funcPtsGraph.find(retNode);
     if (itr != funcPtsGraph.end()) {
       // if the point2 set of the return is not empty
@@ -313,26 +298,6 @@ bool CallGraphPass::runOnFunction(Function *F) {
 
   CG_LOG("######\nProcessing Func: " << F->getName() << "\n");
 
-  // for (auto &A : F->args()) {
-  //   Argument *arg = &A;
-  //   NodeIndex argNode = NF.getValueNodeFor(arg);
-  //   assert(argNode != AndersNodeFactory::InvalidIndex && "Argument node not found!");
-  //   // try apply type shortcuts
-  //   Type *argTy = arg->getType();
-  //   if (PointerType *ptrTy = dyn_cast<PointerType>(argTy)) {
-  //     Type *ElTy = ptrTy->getElementType();
-  //     if (ElTy->isStructTy()) {
-  //       const StructInfo *stInfo = SA.getStructInfo(cast<StructType>(ElTy), F->getParent());
-  //       auto itr = typeShortcuts.find(stInfo);
-  //       if (itr != typeShortcuts.end()) {
-  //         // funcPtsGraph[argNode].clear(); // remove all existing points-to
-  //         funcPtsGraph[argNode].insert(itr->second);
-  //         CG_LOG("Arg: apply type shortcut: " << itr->second << "\n");
-  //       }
-  //     }
-  //   }
-  // }
-
   for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
     Instruction *I = &*i;
 
@@ -341,7 +306,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
         isa<TruncInst>(I) || isa<ICmpInst>(I) || isa<FCmpInst>(I))
       continue;
 
-    CG_DEBUG("Processing instruction: " << *I << "\n");
+    CG_LOG("Processing instruction: " << *I << "\n");
     switch (I->getOpcode()) {
     case Instruction::Ret: {
       if (I->getNumOperands() > 0) {
@@ -421,6 +386,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
     case Instruction::Load: {
       NodeIndex valNode = NF.getValueNodeFor(I);
       // try apply type shortcuts first
+      bool typeShortcut = false;
       Type *Ty = I->getType();
       if (PointerType *ptrTy = dyn_cast<PointerType>(Ty)) {
         Type *ElTy = ptrTy->getElementType();
@@ -430,7 +396,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
           if (itr != typeShortcuts.end()) {
             Changed |= funcPtsGraph[valNode].insert(itr->second);
             CG_LOG("Load: apply type shortcut: " << itr->second << "\n");
-            break;
+            typeShortcut = true;
+            //break;
           }
         }
       }
@@ -458,12 +425,17 @@ bool CallGraphPass::runOnFunction(Function *F) {
             for (auto idx2 = itr2->second.find_first(), end2 = itr2->second.getSize();
                  idx2 < end2; idx2 = itr2->second.find_next(idx2)) {
               CG_LOG("Load: insert: " << idx2 << "\n");
-              Changed |= funcPtsGraph[valNode].insert(idx2);
+              if (funcPtsGraph[valNode].insert(idx2)) {
+                Changed = true;
+                if (typeShortcut) {
+                  WARNING("Non-empty point2 set for type shortcut!\n");
+                }
+              }
             }
 #else
             Changed |= (funcPtsGraph[valNode].insert(itr2->second) > 0);
 #endif
-          } else {
+          } else if (I->getType()->isPointerTy()) {
             CG_LOG("Load: source obj not found in the graph: " << idx << "\n");
           }
         }
@@ -676,6 +648,24 @@ bool CallGraphPass::runOnFunction(Function *F) {
 
 bool CallGraphPass::doInitialization(Module *M) {
 
+  for (auto &GV : M->globals()) {
+    if (Ctx->ExtGobjs.find(GV.getGUID()) != Ctx->ExtGobjs.end())
+      continue;
+    Type *Ty = GV.getType()->getElementType();
+    // collapse array type
+    while (ArrayType *AT = dyn_cast<ArrayType>(Ty))
+      Ty = AT->getElementType();
+    if (StructType *st = dyn_cast<StructType>(Ty)) {
+      const StructInfo *stInfo = SA.getStructInfo(st, M);
+      if (stInfo) {
+        CG_LOG("Record Global: " << GV.getName() << " : " << getScopeName(st, M) << " = " << stInfo << "\n");
+        if (st->isLiteral()) WARNING("Global: " << GV.getName() << " type is literal!\n");
+        NodeIndex valNode = NF.getValueNodeFor(&GV);
+        globalStructs[stInfo].insert(valNode);
+      }
+    }
+  }
+
   for (Function &F : *M) {
     // initialize callers
     auto RF = getFuncDef(&F);
@@ -767,10 +757,12 @@ bool CallGraphPass::doModulePass(Module *M) {
 
   // create type shortcut
   if (typeShortcuts.empty()) {
-    // heuristic: create shortcut for struct ptr used as return value and argument
+    // heuristic: create shortcut for struct ptr used as both return value and argument,
+    // and no global variable has the same type
     for (auto const &[stInfo, nodes] : retStructs) {
       auto itr = argStructs.find(stInfo);
-      if (itr != argStructs.end()) {
+      if (itr != argStructs.end() && globalStructs.find(stInfo) == globalStructs.end()) {
+        CG_LOG("TypeShortcut: candidate " << stInfo << "\n");
         // create obj nodes
         const StructType *stType = stInfo->getRealType();
         unsigned stSize = stInfo->getExpandedSize();
