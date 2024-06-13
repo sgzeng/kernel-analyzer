@@ -306,7 +306,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
         isa<TruncInst>(I) || isa<ICmpInst>(I) || isa<FCmpInst>(I))
       continue;
 
-    CG_LOG("Processing instruction: " << *I << "\n");
+    CG_DEBUG("Processing instruction: " << *I << "\n");
     switch (I->getOpcode()) {
     case Instruction::Ret: {
       if (I->getNumOperands() > 0) {
@@ -375,7 +375,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
         }
       } else {
         CG_LOG("Indirect Call: callee not found in the graph: " << callee << "\n");
-        Changed |= funcPtsObj.insert(callee).second;
+        // Changed |= funcPtsObj.insert(callee).second;
+        funcPtsObj.insert(callee);
       }
       break;
     }
@@ -386,6 +387,10 @@ bool CallGraphPass::runOnFunction(Function *F) {
     case Instruction::Load: {
       NodeIndex valNode = NF.getValueNodeFor(I);
       // try apply type shortcuts first
+      // fast path
+      if (typeShortcutsObj.find(valNode) != typeShortcutsObj.end()) {
+        break;
+      }
       bool typeShortcut = false;
       Type *Ty = I->getType();
       if (PointerType *ptrTy = dyn_cast<PointerType>(Ty)) {
@@ -396,6 +401,7 @@ bool CallGraphPass::runOnFunction(Function *F) {
           if (itr != typeShortcuts.end()) {
             Changed |= funcPtsGraph[valNode].insert(itr->second);
             CG_LOG("Load: apply type shortcut: " << itr->second << "\n");
+            typeShortcutsObj.insert(valNode);
             typeShortcut = true;
             //break;
           }
@@ -440,16 +446,16 @@ bool CallGraphPass::runOnFunction(Function *F) {
           }
         }
       }
-      if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
-        Changed |= funcPtsObj.insert(ptrNode).second;
-        if (Changed) {
-          CG_LOG("Load: source ptr contains func ptr: " << ptrNode << "\n");
-          if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
-            Type *ptrTy = ptr->getType();
-            CG_LOG("Load: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
-          }
-        }
-      }
+      // if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
+      //   if (funcPtsObj.insert(ptrNode).second) {
+      //     Changed = true;
+      //     CG_LOG("Load: source ptr contains func ptr: " << ptrNode << "\n");
+      //     if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
+      //       Type *ptrTy = ptr->getType();
+      //       CG_LOG("Load: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
+      //     }
+      //   }
+      // }
       break;
     }
     case Instruction::Store: {
@@ -478,16 +484,16 @@ bool CallGraphPass::runOnFunction(Function *F) {
           }
         }
       }
-      if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
-        Changed |= funcPtsObj.insert(ptrNode).second;
-        if (Changed) {
-          CG_LOG("Store: dest ptr contains func ptr: " << ptrNode << "\n");
-          if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
-            Type *ptrTy = ptr->getType();
-            CG_LOG("Store: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
-          }
-        }
-      }
+      // if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
+      //   if (funcPtsObj.insert(ptrNode).second) {
+      //     Changed = true;
+      //     CG_LOG("Store: dest ptr contains func ptr: " << ptrNode << "\n");
+      //     if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
+      //       Type *ptrTy = ptr->getType();
+      //       CG_LOG("Store: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
+      //     }
+      //   }
+      // }
       break;
     }
     case Instruction::GetElementPtr: {
@@ -558,16 +564,16 @@ bool CallGraphPass::runOnFunction(Function *F) {
           Changed |= funcPtsGraph[valNode].insert(nidx);
         }
       }
-      if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
-        Changed |= funcPtsObj.insert(ptrNode).second;
-        if (Changed) {
-          CG_LOG("GEP: gep ptr contains func ptr: " << ptrNode << "\n");
-          if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
-            Type *ptrTy = ptr->getType();
-            CG_LOG("GEP: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
-          }
-        }
-      }
+      // if (funcPtsObj.find(valNode) != funcPtsObj.end()) {
+      //   if (funcPtsObj.insert(ptrNode).second) {
+      //     Changed = true;
+      //     CG_LOG("GEP: gep ptr contains func ptr: " << ptrNode << "\n");
+      //     if (funcPtsGraph.find(ptrNode) == funcPtsGraph.end()) {
+      //       Type *ptrTy = ptr->getType();
+      //       CG_LOG("GEP: func ptr not found in the graph: " << ptrNode << ", type = " << *ptrTy << "\n");
+      //     }
+      //   }
+      // }
       break;
     }
     case Instruction::BitCast: {
@@ -579,15 +585,17 @@ bool CallGraphPass::runOnFunction(Function *F) {
         // if the point2 set of the source ptr is not empty
         Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
       }
-      if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
-        Changed |= funcPtsObj.insert(dstNode).second;
-        if (Changed)
-          CG_LOG("bitcast: src ptr contains func ptr: " << srcNode << ", type = " << *I->getOperand(0)->getType() << "\n");
-      } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
-        Changed |= funcPtsObj.insert(srcNode).second;
-        if (Changed)
-          CG_LOG("bitcast: dst ptr contains func ptr: " << dstNode << ", type = " << *I->getType() << "\n");
-      }
+      // if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
+      //   if (funcPtsObj.insert(dstNode).second) {
+      //     Changed = true;
+      //     CG_LOG("bitcast: src ptr contains func ptr: " << srcNode << ", type = " << *I->getOperand(0)->getType() << "\n");
+      //   }
+      // } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
+      //   if (funcPtsObj.insert(srcNode).second) {
+      //     Changed = true;
+      //     CG_LOG("bitcast: dst ptr contains func ptr: " << dstNode << ", type = " << *I->getType() << "\n");
+      //   }
+      // }
       break;
     }
     case Instruction::PHI: {
@@ -602,15 +610,17 @@ bool CallGraphPass::runOnFunction(Function *F) {
           // if the point2 set of the source ptr is not empty
           Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
         }
-        if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
-          Changed |= funcPtsObj.insert(dstNode).second;
-          if (Changed)
-            CG_LOG("PHI: src ptr contains func ptr: " << srcNode << ", type = " << *src->getType() << "\n");
-        } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
-          Changed |= funcPtsObj.insert(srcNode).second;
-          if (Changed)
-            CG_LOG("PHI: dst ptr contains func ptr: " << dstNode << ", type = " << *PHI->getType() << "\n");
-        }
+        // if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
+        //   if (funcPtsObj.insert(dstNode).second) {
+        //     Changed = true;
+        //     CG_LOG("PHI: src ptr contains func ptr: " << srcNode << ", type = " << *src->getType() << "\n");
+        //   }
+        // } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
+        //   if (funcPtsObj.insert(srcNode).second) {
+        //     Changed = true;
+        //     CG_LOG("PHI: dst ptr contains func ptr: " << dstNode << ", type = " << *PHI->getType() << "\n");
+        //   }
+        // }
       }
       break;
     }
@@ -625,15 +635,17 @@ bool CallGraphPass::runOnFunction(Function *F) {
           // if the point2 set of the source ptr is not empty
           Changed |= (funcPtsGraph[dstNode].insert(itr->second) > 0);
         }
-        if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
-          Changed |= funcPtsObj.insert(dstNode).second;
-          if (Changed)
-            CG_LOG("Select: src ptr contains func ptr: " << srcNode << ", type = " << *src->getType() << "\n");
-        } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
-          Changed |= funcPtsObj.insert(srcNode).second;
-          if (Changed)
-            CG_LOG("Select: dst ptr contains func ptr: " << dstNode << ", type = " << *I->getType() << "\n");
-        }
+        // if (funcPtsObj.find(srcNode) != funcPtsObj.end()) {
+        //   if (funcPtsObj.insert(dstNode).second) {
+        //     Changed = true;
+        //     CG_LOG("Select: src ptr contains func ptr: " << srcNode << ", type = " << *src->getType() << "\n");
+        //   }
+        // } else if (funcPtsObj.find(dstNode) != funcPtsObj.end()) {
+        //   if (funcPtsObj.insert(srcNode).second) {
+        //     Changed = true;
+        //     CG_LOG("Select: dst ptr contains func ptr: " << dstNode << ", type = " << *I->getType() << "\n");
+        //   }
+        // }
       }
       break;
     }
@@ -793,67 +805,65 @@ bool CallGraphPass::doModulePass(Module *M) {
   {
     Changed = false;
 
-    // collect func ptr containers
-    for (auto &GV : M->globals()) {
-      // check for function pointers
-      if (!GV.hasInitializer())
-        continue;
-      auto valNode = NF.getValueNodeFor(&GV);
-      if (funcPtsObj.find(valNode) != funcPtsObj.end())
-        continue;
-      auto objNode = NF.getObjectNodeFor(&GV);
-      assert(objNode != AndersNodeFactory::InvalidIndex && "Global object node not found!");
-      auto objSize = NF.getObjectSize(objNode);
-      for (unsigned i = 0; i < objSize; ++i) {
-        // collect function pointers
-        auto field = objNode + i;
-        auto itr = funcPtsGraph.find(field);
-        if (itr == funcPtsGraph.end())
-          continue;
-        // check point2 of each field
-        for (auto idx = itr->second.find_first(), end = itr->second.getSize();
-             idx < end; idx = itr->second.find_next(idx)) {
-          if (NF.isSpecialNode(idx)) {
-            // special object, e.g., null or univeral
-            continue;
-          }
-          auto init = NF.getValueForNode(idx);
-          if (!init) {
-            CG_LOG("GV with idx w/ no value: " << idx << "\n");
-            continue;
-          }
-          auto F = dyn_cast<Function>(init);
-          if (F) {
-            Ctx->FuncPtrs[field].insert(F);
-            if (funcPtsObj.insert(field).second)
-              CG_LOG("Function pointer to " << F->getName() << " assigned to " << field << "\n");
-          } else if (funcPtsObj.find(idx) != funcPtsObj.end()) {
-            funcPtsObj.insert(field);
-          }
-        }
-        // propage from field to obj
-        if (funcPtsObj.find(field) != funcPtsObj.end()) {
-          if (funcPtsObj.insert(objNode).second)
-            CG_LOG("Function pointer found in global " << GV.getName() << "\n");
-        }
-      }
-      if (funcPtsObj.find(objNode) != funcPtsObj.end()) {
-        funcPtsObj.insert(valNode).second;
-      }
-    }
+    // // collect func ptr containers
+    // for (auto &GV : M->globals()) {
+    //   // check for function pointers
+    //   if (!GV.hasInitializer())
+    //     continue;
+    //   auto valNode = NF.getValueNodeFor(&GV);
+    //   if (funcPtsObj.find(valNode) != funcPtsObj.end())
+    //     continue;
+    //   auto objNode = NF.getObjectNodeFor(&GV);
+    //   assert(objNode != AndersNodeFactory::InvalidIndex && "Global object node not found!");
+    //   auto objSize = NF.getObjectSize(objNode);
+    //   for (unsigned i = 0; i < objSize; ++i) {
+    //     // collect function pointers
+    //     auto field = objNode + i;
+    //     auto itr = funcPtsGraph.find(field);
+    //     if (itr == funcPtsGraph.end())
+    //       continue;
+    //     // check point2 of each field
+    //     for (auto idx = itr->second.find_first(), end = itr->second.getSize();
+    //          idx < end; idx = itr->second.find_next(idx)) {
+    //       if (NF.isSpecialNode(idx)) {
+    //         // special object, e.g., null or univeral
+    //         continue;
+    //       }
+    //       auto init = NF.getValueForNode(idx);
+    //       if (!init) {
+    //         CG_LOG("GV with idx w/ no value: " << idx << "\n");
+    //         continue;
+    //       }
+    //       auto F = dyn_cast<Function>(init);
+    //       if (F) {
+    //         Ctx->FuncPtrs[field].insert(F);
+    //         if (funcPtsObj.insert(field).second)
+    //           CG_LOG("Function pointer to " << F->getName() << " assigned to " << field << "\n");
+    //       } else if (funcPtsObj.find(idx) != funcPtsObj.end()) {
+    //         funcPtsObj.insert(field);
+    //       }
+    //     }
+    //     // propage from field to obj
+    //     if (funcPtsObj.find(field) != funcPtsObj.end()) {
+    //       if (funcPtsObj.insert(objNode).second)
+    //         CG_LOG("Function pointer found in global " << GV.getName() << "\n");
+    //     }
+    //   }
+    //   if (funcPtsObj.find(objNode) != funcPtsObj.end()) {
+    //     funcPtsObj.insert(valNode).second;
+    //   }
+    // }
 
     // process functions
     for (Function &F : *M) {
       if (F.isDeclaration() || F.isIntrinsic() || F.empty())
         continue;
-      // if (reachable.find(&F) != reachable.end())
-      Changed |= runOnFunction(&F);
-      // runOnFunction(&F);
+      if (reachable.find(&F) != reachable.end())
+        Changed |= runOnFunction(&F);
     }
     ret |= Changed;
   }
 
-  // return false;
   return ret;
 }
 
