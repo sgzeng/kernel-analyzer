@@ -7,8 +7,8 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <vector>
-#include <map>
 #include <set>
+#include <unordered_map>
 
 // Every struct type T is mapped to the vectors fieldSize and offsetMap.
 // If field [i] in the expanded struct T begins an embedded struct, fieldSize[i] is the # of fields in the largest such struct, else S[i] = 1.
@@ -25,7 +25,7 @@ private:
 	std::vector<unsigned> fieldRealSize; // field index => allocation size in bytes
 
 	// field => type(s) map, stripping off arrays
-	std::map<unsigned, std::set<const llvm::Type*> > elementType;
+	std::unordered_map<unsigned, std::set<const llvm::Type*> > elementType;
 	
 	// the corresponding data layout for this struct
 	const llvm::DataLayout* dataLayout;
@@ -164,11 +164,11 @@ class StructAnalyzer
 {
 private:
 	// Map llvm type to corresponding StructInfo
-	typedef std::map<const llvm::StructType*, StructInfo> StructInfoMap;
+	typedef std::unordered_map<const llvm::StructType*, StructInfo> StructInfoMap;
 	StructInfoMap structInfoMap;
 
 	// Map struct name to llvm type
-	typedef std::map<const std::string, const llvm::StructType*> StructMap;
+	typedef std::unordered_map<std::string, const llvm::StructType*> StructMap;
 	StructMap structMap;
 
 	// Expand (or flatten) the specified StructType and produce StructInfo
@@ -178,7 +178,7 @@ private:
 	// update container information
 	void addContainer(const llvm::StructType* container, StructInfo& containee, unsigned offset, const llvm::Module* M);
 public:
-	StructAnalyzer() {}
+	StructAnalyzer() = default;
 
 	// Return NULL if info not found
 	const StructInfo* getStructInfo(const llvm::StructType* st, llvm::Module* M) const;

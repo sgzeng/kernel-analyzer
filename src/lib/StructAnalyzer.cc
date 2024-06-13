@@ -17,6 +17,8 @@
 
 using namespace llvm;
 
+#define SA_LOG(stmt) KA_LOG(2, "StructAnalyzer: " << stmt)
+
 // Initialize max struct info
 const StructType* StructInfo::maxStruct = NULL;
 unsigned StructInfo::maxStructSize = 0;
@@ -166,15 +168,19 @@ void StructAnalyzer::run(Module* M, const DataLayout* layout)
   for (const auto &st : usedStructTypes) {
     // handle non-literal first
     if (st->isLiteral()) {
+      // SA_LOG("Process literal struct " << *st << "\n");
       addStructInfo(st, M, layout);
       continue;
     }
 
     // only add non-opaque type
     if (!st->isOpaque()) {
+      SA_LOG("Process struct " << getScopeName(st, M) << "\n");
       // process new struct only
-      if (structMap.insert(std::make_pair(getScopeName(st, M), st)).second)
-        addStructInfo(st, M, layout);
+      if (structMap.insert(std::make_pair(getScopeName(st, M), st)).second) {
+        auto &stInfo = addStructInfo(st, M, layout);
+        SA_LOG("Map struct " << getScopeName(st, M) << " to " << &stInfo << "\n");
+      }
     }
   }
 }
@@ -192,7 +198,7 @@ const StructInfo* StructAnalyzer::getStructInfo(const StructType* st, Module* M)
     if (real != structMap.end()) {
       st = real->second;
     } else {
-      errs() << "cannot find struct, scopeName:" << getScopeName(st, M) << "\n";
+      WARNING("cannot find struct, scopeName: " << getScopeName(st, M) << "\n");
       st->print(errs());
       errs() << "\n";
     }
