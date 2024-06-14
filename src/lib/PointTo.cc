@@ -456,6 +456,11 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
 
         // Next, handle allocators
         switch (I->getOpcode()) {
+          case Instruction::Ret: {
+            const ReturnInst *RI = cast<ReturnInst>(I);
+            GlobalCtx.RetSites[&F] = RI;
+            break;
+          }
           case Instruction::Alloca: {
             Type *Ty = cast<AllocaInst>(I)->getAllocatedType();
             NodeIndex obj = createNodeForTypedVal(I, Ty, false, nodeFactory, structAnalyzer);
@@ -480,12 +485,12 @@ void populateNodeFactory(GlobalContext &GlobalCtx) {
 
   // Create object nodes for external global variables and functions
   for (auto const &itr: GlobalCtx.ExtGobjs) {
-    PT_LOG("Creating node for external global " << itr.second->getName() << "\n");
-    nodeFactory.createObjectNode(itr.second);
+    auto node = nodeFactory.createObjectNode(itr.second);
+    PT_LOG("Creating node " << node << " for external global " << itr.second->getName() << "\n");
   }
   for (auto const &itr: GlobalCtx.ExtFuncs) {
-    PT_LOG("Creating node for external function " << itr.second->getName() << "\n");
-    nodeFactory.createObjectNode(itr.second);
+    auto node = nodeFactory.createObjectNode(itr.second);
+    PT_LOG("Creating node " << node << " for external function " << itr.second->getName() << "\n");
   }
 
   // iterate again to process global initializers

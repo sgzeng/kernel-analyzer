@@ -35,6 +35,7 @@ typedef std::unordered_map<NodeIndex, FuncSet> FuncPtrMap;
 
 typedef llvm::DenseMap<const llvm::Function*, CallInstSet> CallerMap;
 typedef llvm::DenseMap<const llvm::CallBase*, FuncSet> CalleeMap;
+typedef llvm::DenseMap<const llvm::Function*, const llvm::ReturnInst*> RetSiteMap;
 
 typedef boost::unordered_flat_map<std::size_t, AndersPtsSet> PtsGraph;
 typedef boost::unordered_flat_map<llvm::Instruction*, PtsGraph> NodeToPtsGraph;
@@ -95,6 +96,9 @@ public:
 
   // Allocation sites
   CallInstSet AllocSites;
+
+  // Return sites
+  RetSiteMap RetSites;
 
   // A factory object that knows how to manage AndersNodes
   AndersNodeFactory nodeFactory;
