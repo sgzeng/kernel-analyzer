@@ -66,21 +66,22 @@ void IterativeModulePass::run(ModuleList &modules) {
   ModuleList::iterator i, e;
   Diag << "[" << ID << "] Initializing " << modules.size() << " modules ";
   bool again = true;
+  Iteration = 0;
   while (again) {
     again = false;
     for (i = modules.begin(), e = modules.end(); i != e; ++i) {
       again |= doInitialization(i->first);
       Diag << ".";
     }
+    Iteration++;
   }
   Diag << "\n";
 
-  unsigned iter = 0, changed = 1;
+  unsigned changed = 1;
   while (changed) {
-    ++iter;
     changed = 0;
     for (i = modules.begin(), e = modules.end(); i != e; ++i) {
-      Diag << "[" << ID << " / " << iter << "] ";
+      Diag << "[" << ID << " / " << Iteration << "] ";
       // FIXME: Seems the module name is incorrect, and perhaps it's a bug.
       Diag << "[" << i->second << "]\n";
 
@@ -92,16 +93,19 @@ void IterativeModulePass::run(ModuleList &modules) {
         Diag << "\n";
     }
     Diag << "[" << ID << "] Updated in " << changed << " modules.\n";
+    Iteration++;
   }
 
   Diag << "[" << ID << "] Postprocessing ...\n";
   again = true;
+  Iteration = 0;
   while (again) {
     again = false;
     for (i = modules.begin(), e = modules.end(); i != e; ++i) {
       // TODO: Dump the results.
       again |= doFinalization(i->first);
     }
+    Iteration++;
   }
 
   Diag << "[" << ID << "] Done!\n\n";

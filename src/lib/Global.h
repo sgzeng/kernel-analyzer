@@ -116,6 +116,7 @@ class IterativeModulePass {
 protected:
   GlobalContext *Ctx;
   const char *ID;
+  unsigned long Iteration;
 public:
   IterativeModulePass(GlobalContext *Ctx_, const char *ID_)
     : Ctx(Ctx_), ID(ID_) { }
