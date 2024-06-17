@@ -200,7 +200,7 @@ int main(int argc, char **argv) {
   // Main workflow
   CallGraphPass CGPass(&GlobalCtx);
   CGPass.run(GlobalCtx.Modules);
-  CGPass.dumpCallees();
+  CGPass.dumpCallees(errs());
 
 //   if (DumpCallees)
 //     CGPass.dumpCallees();
