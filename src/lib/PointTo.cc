@@ -379,10 +379,12 @@ static void processInitializer(NodeIndex obj, const Type *objTy, Constant *init,
       NodeIndex objNode = nodeFactory.getObjectNodeFor(init); // already handles name to def mapping
       assert(objNode != AndersNodeFactory::InvalidIndex && "Invalid node index for global variable");
       ptsGraph[obj].insert(objNode);
+      PT_LOG("assign global variable " << cast<GlobalVariable>(init)->getName() << " to " << obj << "\n");
     } else if (isa<Function>(init)) {
       NodeIndex objNode = nodeFactory.getObjectNodeFor(init); // already handles name to def mapping
       assert(objNode != AndersNodeFactory::InvalidIndex && "Invalid node index for function");
       ptsGraph[obj].insert(objNode);
+      PT_LOG("assign function " << cast<Function>(init)->getName() << " to " << obj << "\n");
     } else if (isa<ConstantExpr>(init)) {
       ConstantExpr *CE = cast<ConstantExpr>(init);
       switch (CE->getOpcode()) {
