@@ -1,6 +1,7 @@
 CUR_DIR = $(shell pwd)
 SRC_DIR := ${CURDIR}/src
 BUILD_DIR := ${CURDIR}/build
+BUILD_TYPE := ${BUILD_TYPE:=Release}
 
 include Makefile.inc
 
@@ -14,7 +15,7 @@ build_ka_func = \
 			LLVM_LIBRARY_DIRS=${LLVM_BUILD}/lib \
 			LLVM_INCLUDE_DIRS=${LLVM_BUILD}/include \
 			CC=clang CXX=clang++ \
-			cmake ${1} -DCMAKE_BUILD_TYPE=Release \
+			cmake ${1} -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
 		&& make -j${NPROC})
 
 all: KAMain
