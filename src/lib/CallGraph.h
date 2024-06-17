@@ -14,7 +14,7 @@ private:
   bool runOnFunction(llvm::Function*);
   bool handleCall(llvm::CallBase*, const llvm::Function*);
   bool isCompatibleType(llvm::Type *T1, llvm::Type *T2);
-  bool findCalleesByType(llvm::CallInst*, FuncSet&);
+  bool findCalleesByType(llvm::CallBase*, FuncSet&);
 
   AndersNodeFactory &NF;
   StructAnalyzer &SA;
@@ -24,7 +24,9 @@ private:
 
   boost::unordered_flat_set<const llvm::Value*> funcPts; // values that may reach a fptr
   boost::unordered_flat_set<NodeIndex> funcPtsObj; // objects that may reach a fptr
-  std::unordered_set<llvm::Function*> reachable; // reachable from main
+  std::unordered_set<const llvm::Function*> reachable; // reachable from main
+  std::unordered_set<const llvm::Function*> unvisited; // visited functions
+  node_set_t unresolvedFPts; // fptrs that are not resolved
 
   std::unordered_map<const StructInfo*, node_set_t> retStructs; // structs returned by functions
   std::unordered_map<const StructInfo*, node_set_t> argStructs; // structs passed as arguments
@@ -46,8 +48,8 @@ public:
 
   // debug
   void dumpFuncPtrs(llvm::raw_ostream &OS);
-  void dumpCallees();
-  void dumpCallers();
+  void dumpCallees(llvm::raw_ostream &OS);
+  void dumpCallers(llvm::raw_ostream &OS);
 };
 
 #endif

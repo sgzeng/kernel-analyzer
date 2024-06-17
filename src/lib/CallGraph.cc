@@ -137,49 +137,48 @@ bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
   }
 }
 
-bool CallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
-    CallBase &CS = *CI;
-    //errs() << *CI << "\n";
-    for (const Function *F : Ctx->AddressTakenFuncs) {
+bool CallGraphPass::findCalleesByType(CallBase *CS, FuncSet &FS) {
+  //errs() << *CS << "\n";
+  for (const Function *F : Ctx->AddressTakenFuncs) {
 
-        // just compare known args
-        if (F->getFunctionType()->isVarArg()) {
-            //errs() << "VarArg: " << F->getName() << "\n";
-            //report_fatal_error("VarArg address taken function\n");
-        } else if (F->arg_size() != CS.arg_size()) {
-            //errs() << "ArgNum mismatch: " << F.getName() << "\n";
-            continue;
-        } else if (!isCompatibleType(F->getReturnType(), CI->getType())) {
-            continue;
-        }
-
-        if (F->isIntrinsic()) {
-            //errs() << "Intrinsic: " << F.getName() << "\n";
-            continue;
-        }
-
-        // type matching on args
-        bool Matched = true;
-        auto AI = CS.arg_begin();
-        for (auto FI = F->arg_begin(), FE = F->arg_end();
-             FI != FE; ++FI, ++AI) {
-            // check type mis-match
-            Type *FormalTy = FI->getType();
-            Type *ActualTy = (*AI)->getType();
-
-            if (isCompatibleType(FormalTy, ActualTy))
-                continue;
-            else {
-                Matched = false;
-                break;
-            }
-        }
-
-        if (Matched)
-            FS.insert(F);
+    // just compare known args
+    if (F->getFunctionType()->isVarArg()) {
+      //errs() << "VarArg: " << F->getName() << "\n";
+      //report_fatal_error("VarArg address taken function\n");
+    } else if (F->arg_size() != CS->arg_size()) {
+      //errs() << "ArgNum mismatch: " << F.getName() << "\n";
+      continue;
+    } else if (!isCompatibleType(F->getReturnType(), CS->getType())) {
+      continue;
     }
 
-    return false;
+    if (F->isIntrinsic()) {
+      //errs() << "Intrinsic: " << F.getName() << "\n";
+      continue;
+    }
+
+    // type matching on args
+    bool Matched = true;
+    auto AI = CS->arg_begin();
+    for (auto FI = F->arg_begin(), FE = F->arg_end();
+         FI != FE; ++FI, ++AI) {
+      // check type mis-match
+      Type *FormalTy = FI->getType();
+      Type *ActualTy = (*AI)->getType();
+
+      if (isCompatibleType(FormalTy, ActualTy))
+        continue;
+      else {
+        Matched = false;
+        break;
+      }
+    }
+
+    if (Matched)
+      FS.insert(F);
+  }
+
+  return false;
 }
 
 bool CallGraphPass::handleCall(llvm::CallBase *CS, const llvm::Function *CF) {
@@ -298,6 +297,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
 
   CG_LOG("######\nProcessing Func: " << F->getName() << "\n");
 
+  unvisited.erase(F);
+
   for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
     Instruction *I = &*i;
 
@@ -337,7 +338,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
       if (Function *CF = CS->getCalledFunction()) {
         // direct call
         auto RCF = getFuncDef(CF);
-        reachable.insert(RCF);
+        if (reachable.insert(RCF).second)
+          unvisited.insert(RCF);
         Ctx->Callees[CS].insert(RCF);
         Changed |= handleCall(CS, RCF);
         break;
@@ -368,15 +370,26 @@ bool CallGraphPass::runOnFunction(Function *F) {
             WARNING("Function pointer " << *CO << " points to non-function: " << *CV << "\n");
             continue;
           }
-          reachable.insert(CF);
+          if (reachable.insert(CF).second)
+            unvisited.insert(CF);
           Ctx->Callees[CS].insert(CF);
           CG_LOG("Indirect Call: callee: " << CF->getName() << "\n");
           Changed |= handleCall(CS, CF);
         }
+        // update unresolved function pointers
+        if (itr->second.getSize() != 0) {
+          unresolvedFPts.erase(callee);
+        }
       } else {
         CG_LOG("Indirect Call: callee not found in the graph: " << callee << "\n");
         // Changed |= funcPtsObj.insert(callee).second;
-        funcPtsObj.insert(callee);
+        // funcPtsObj.insert(callee);
+        FuncSet &TS = calleeByType[CS];
+        findCalleesByType(CS, TS);
+        if (!TS.empty()) {
+          // XXX: doesn't matter if type match fails?
+          unresolvedFPts.insert(callee);
+        }
       }
       break;
     }
@@ -704,6 +717,7 @@ bool CallGraphPass::doInitialization(Module *M) {
     // reachable?
     if (F.getName().equals("main") || F.getName().startswith("SyS_")) {
       reachable.insert(&F);
+      unvisited.insert(&F);
     }
 
     // type shortcut heuristic?
@@ -802,6 +816,7 @@ bool CallGraphPass::doModulePass(Module *M) {
 
   // while (Changed)
   // for (unsigned iter = 0; iter < 2; ++iter)
+  if (Iteration < 2)
   {
     Changed = false;
 
@@ -856,10 +871,12 @@ bool CallGraphPass::doModulePass(Module *M) {
 
     // process functions
     for (Function &F : *M) {
+      // if (unvisited.empty() && unresolvedFPts.empty()) // terminate early
+      //   return false;
       if (F.isDeclaration() || F.isIntrinsic() || F.empty())
         continue;
-      if (reachable.find(&F) != reachable.end())
-        Changed |= runOnFunction(&F);
+      // if (reachable.find(&F) != reachable.end())
+      Changed |= runOnFunction(&F);
     }
     ret |= Changed;
   }
@@ -883,70 +900,87 @@ void CallGraphPass::dumpFuncPtrs(raw_ostream &OS) {
   }
 }
 
-void CallGraphPass::dumpCallees() {
-    RES_REPORT("\n[dumpCallees]\n");
-    raw_ostream &OS = outs();
-    OS << "Num of Callees: " << Ctx->Callees.size() << "\n";
-    for (CalleeMap::iterator i = Ctx->Callees.begin(), 
-         e = Ctx->Callees.end(); i != e; ++i) {
+void CallGraphPass::dumpCallees(raw_ostream &OS) {
+  CG_LOG("\n[dumpCallees]\n");
+  CG_LOG("Num of Callees: " << Ctx->Callees.size() << "\n");
 
-        auto CI = i->first;
-        FuncSet &v = i->second;
-        // only dump indirect call?
-        if (CI->isInlineAsm() || CI->getCalledFunction() /*|| v.empty()*/)
-             continue;
+  size_t empty = 0;
+  for (CalleeMap::iterator i = Ctx->Callees.begin(),
+       e = Ctx->Callees.end(); i != e; ++i) {
 
-        // OS << "CS:" << *CI << "\n";
-        // const DebugLoc &LOC = CI->getDebugLoc();
-        // OS << "LOC: ";
-        // LOC.print(OS);
-        // OS << "^@^";
-        std::string prefix = "<" + CI->getParent()->getParent()->getParent()->getName().str() + ">"
-            + CI->getParent()->getParent()->getName().str() + "::";
-#if 1
-        for (FuncSet::iterator j = v.begin(), ej = v.end();
-             j != ej; ++j) {
-            //OS << "\t" << ((*j)->hasInternalLinkage() ? "f" : "F")
-            //    << " " << (*j)->getName() << "\n";
-            OS << prefix << *CI << "\t";
-            OS << (*j)->getName() << "\n";
-        }
-#endif
-        // OS << "\n";
+    auto CI = i->first;
+    FuncSet &v = i->second;
+    // only dump indirect call?
+    if (CI->isInlineAsm() || CI->getCalledFunction())
+      continue;
 
-        // v = Ctx->Callees[CI];
-        // OS << "Callees: ";
-        // for (FuncSet::iterator j = v.begin(), ej = v.end();
-        //      j != ej; ++j) {
-        //     OS << (*j)->getName() << "::";
-        // }
-        // OS << "\n";
-        if (v.empty()) {
-            OS << "!!EMPTY =>" << *CI->getCalledOperand()<<"\n";
-            OS<< "Uninitialized function pointer is dereferenced!\n";
-        }
+    if (v.empty()) {
+      empty++;
+      continue;
     }
-    RES_REPORT("\n[End of dumpCallees]\n");
+
+    // OS << "CS:" << *CI << "\n";
+    // const DebugLoc &LOC = CI->getDebugLoc();
+    // OS << "LOC: ";
+    // LOC.print(OS);
+    // OS << "^@^";
+    std::string prefix = "<" + CI->getParent()->getParent()->getParent()->getName().str() + ">"
+      + CI->getParent()->getParent()->getName().str() + "::";
+#if 1
+    for (FuncSet::iterator j = v.begin(), ej = v.end();
+         j != ej; ++j) {
+      // OS << "\t" << ((*j)->hasInternalLinkage() ? "f" : "F")
+      //    << " " << (*j)->getName() << "\n";
+      OS << prefix << *CI << "\t";
+      OS << (*j)->getName() << "\n";
+    }
+#endif
+  }
+
+  CG_LOG("[Empty Callees: " << empty << "]\n");
+  for (CalleeMap::iterator i = Ctx->Callees.begin(),
+       e = Ctx->Callees.end(); i != e; ++i) {
+    auto CI = i->first;
+    FuncSet &v = i->second;
+    if (CI->isInlineAsm() || CI->getCalledFunction())
+      continue;
+    auto caller = CI->getParent()->getParent();
+    if (reachable.find(caller) == reachable.end())
+      continue;
+    if (v.empty()) {
+      OS << "!!EMPTY =>" << *CI << " @@" << caller->getName() << "\n";
+      // OS << "Uninitialized function pointer is dereferenced!\n";
+      auto &tv = calleeByType[CI];
+      if (!tv.empty()) {
+        OS << "TypeMatch: ";
+        for (auto *F : tv) {
+          OS << F->getName() << " ";
+        }
+        OS << "\n";
+      }
+    }
+  }
+  CG_LOG("\n[End of dumpCallees]\n");
 }
 
-void CallGraphPass::dumpCallers() {
-    RES_REPORT("\n[dumpCallers]\n");
-    for (auto M : Ctx->Callers) {
-        const Function *F = M.first;
-        CallInstSet &CIS = M.second;
-        RES_REPORT("F : " << getScopeName(F) << "\n");
+void CallGraphPass::dumpCallers(raw_ostream &OS) {
+  CG_LOG("\n[dumpCallers]\n");
+  for (auto M : Ctx->Callers) {
+    const Function *F = M.first;
+    CallInstSet &CIS = M.second;
+    OS << "F : " << getScopeName(F) << "\n";
 
-        for (auto *CI : CIS) {
-            const Function *CallerF = CI->getParent()->getParent();
-            RES_REPORT("\t");
-            if (CallerF && CallerF->hasName()) {
-                RES_REPORT("(" << getScopeName(CallerF) << ") ");
-            } else {
-                RES_REPORT("(anonymous) ");
-            }
+    for (auto *CI : CIS) {
+      const Function *CallerF = CI->getParent()->getParent();
+      OS << "\t";
+      if (CallerF && CallerF->hasName()) {
+        OS << "(" << getScopeName(CallerF) << ") ";
+      } else {
+        OS << "(anonymous) ";
+      }
 
-            RES_REPORT(*CI << "\n");
-        }
+      OS << *CI << "\n";
     }
-    RES_REPORT("\n[End of dumpCallers]\n");
+  }
+  CG_LOG("\n[End of dumpCallers]\n");
 }
