@@ -79,6 +79,9 @@ public:
   // Map external global function name to a single declaration
   FuncMap ExtFuncs;
 
+  // Map function signature to function definition
+  std::unordered_map<size_t, FuncSet> FuncSigs;
+
   // Map function pointers to possible assignments
   FuncPtrMap FuncPtrs;
 

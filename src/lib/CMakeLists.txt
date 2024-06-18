@@ -6,6 +6,10 @@ set (KASource
   PointTo.cc
   CallGraph.cc
   Reachable.cc
+  TyPMCommon.cc
+  MLTA.cc
+  TyPM.cc
+  TyPMPass.cc
 )
 
 # Build executable, KAMain.
