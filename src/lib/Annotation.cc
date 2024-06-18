@@ -271,7 +271,7 @@ std::string getLoadId(LoadInst *LI) {
 
 std::string getStructId(Value *PVal, User::op_iterator &IS, User::op_iterator &IE, Module *M) {
 
-  Type *PTy = PVal->getType();
+//  Type *PTy = PVal->getType();
   StructType *STy = nullptr;
 //   for (++IE; IS != IE; ++IS) {
 //     if (!CT) break;
@@ -553,7 +553,7 @@ static inline void getBBDebugLoc(const BasicBlock *BB, std::string &Filename, un
   }
 }
 
-uint32_t getBasicBlockId(BasicBlock *BB) {
+uint32_t getBasicBlockId(const BasicBlock *BB) {
   static uint32_t unamed = 0;
   std::string bb_name_with_col("");
   std::string filename;

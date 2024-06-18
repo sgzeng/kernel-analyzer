@@ -33,7 +33,7 @@
 using namespace llvm;
 
 Function* ReachableCallGraphPass::getFuncDef(Function *F) {
-  FuncMap::iterator it = Ctx->Funcs.find(F->getName().str());
+  FuncMap::iterator it = Ctx->Funcs.find(F->getGUID());
   if (it != Ctx->Funcs.end())
     return it->second;
   else
@@ -43,10 +43,8 @@ Function* ReachableCallGraphPass::getFuncDef(Function *F) {
 bool ReachableCallGraphPass::isCompatibleType(Type *T1, Type *T2) {
   if (T1 == T2) {
       return true;
-#if LLVM_VERSION_MAJOR > 9
   } else if (T1->isVoidTy()) {
     return T2->isVoidTy();
-#endif
   } else if (T1->isIntegerTy()) {
     // assume pointer can be cased to the address space size
     if (T2->isPointerTy() && T1->getIntegerBitWidth() == T2->getPointerAddressSpace())
@@ -140,11 +138,7 @@ bool ReachableCallGraphPass::isCompatibleType(Type *T1, Type *T2) {
 }
 
 bool ReachableCallGraphPass::findCalleesByType(CallInst *CI, FuncSet &FS) {
-#if LLVM_VERSION_MAJOR > 10
     CallBase &CS = *CI;
-#else
-    CallSite CS(CI);
-#endif
     bool Changed = false;
     RA_LOG("Handle indirect call: " << *CI << "\n");
     for (const Function *F : Ctx->AddressTakenFuncs) {
@@ -271,18 +265,18 @@ bool ReachableCallGraphPass::doFinalization(Module *M) {
   return false;
 }
 
-void ReachableCallGraphPass::collectReachable(std::deque<BasicBlock*> &worklist, std::unordered_set<BasicBlock*> &reachable) {
+void ReachableCallGraphPass::collectReachable(std::deque<const BasicBlock*> &worklist, std::unordered_set<const BasicBlock*> &reachable) {
   while (!worklist.empty()) {
-    BasicBlock *BB = worklist.front();
+    auto *BB = worklist.front();
     worklist.pop_front();
     for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
-      BasicBlock *Pred = *PI;
+      auto *Pred = *PI;
       if (reachable.insert(Pred).second) {
         worklist.push_back(Pred);
       }
     }
     // entry block, add caller
-    Function *F = BB->getParent();
+    auto *F = BB->getParent();
     if (BB == &F->getEntryBlock()) {
       auto itr = Ctx->Callers.find(F);
       if (itr != Ctx->Callers.end()) {
@@ -326,7 +320,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
   }
 
   // do a BFS search on the call graph to find BB that can reach exits
-  std::deque<BasicBlock*> worklist;
+  std::deque<const BasicBlock*> worklist;
   RA_DEBUG("=== Collecting exit BBs ===\n");
   worklist.insert(worklist.end(), exitBBs.begin(), exitBBs.end());
   collectReachable(worklist, exitBBs);
@@ -342,15 +336,15 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
     worklist.push_back(kv.first);
   // fixed point iteration?
   while (!worklist.empty()) {
-    BasicBlock *BB = worklist.front();
+    auto *BB = worklist.front();
     worklist.pop_front();
     // check predecessors
     for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
-      BasicBlock *Pred = *PI;
+      auto *Pred = *PI;
       int numSucc = 0;
       double prob = 0.0;
       for (auto SI = succ_begin(Pred), SE = succ_end(Pred); SI != SE; ++SI) {
-        BasicBlock *Succ = *SI;
+        auto *Succ = *SI;
         numSucc++;
         // unreachable one has prob 0
         if (reachableBBs.find(Succ) == reachableBBs.end())
@@ -371,7 +365,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
       }
     }
     // entry block has no predecessor, add caller
-    Function *F = BB->getParent();
+    auto *F = BB->getParent();
     if (BB == &F->getEntryBlock()) {
       auto itr = Ctx->Callers.find(F);
       if (itr != Ctx->Callers.end()) {
@@ -456,8 +450,8 @@ ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_, std::string 
 }
 
 void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bool dumpUnreachable) {
-  std::deque<BasicBlock*> worklist;
-  std::unordered_set<BasicBlock*> visited;
+  std::deque<const BasicBlock*> worklist;
+  std::unordered_set<const BasicBlock*> visited;
   unsigned long currentDist = -1;
   for (auto BB : entryBBs) {
     if (distances.find(BB) != distances.end()) {
@@ -473,7 +467,7 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
   // dump reachable bb
   if (dumpSolution) {
     while (!worklist.empty()) {
-      BasicBlock *BB = worklist.front();
+      auto *BB = worklist.front();
       worklist.pop_front();
       if (distances[BB] < currentDist) {
         currentDist = distances[BB];
@@ -499,13 +493,13 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
           }
         }
         // check for callees
-        if (CallInst *CI = dyn_cast<CallInst>(&I)) {
+        if (const CallInst *CI = dyn_cast<CallInst>(&I)) {
           auto itr = Ctx->Callees.find(CI);
           if (itr == Ctx->Callees.end()) {
             itr = calleeByType.find(CI);
           }
           for (auto F: itr->second) {
-            BasicBlock *FBB = const_cast<BasicBlock*>(&F->getEntryBlock());
+            auto *FBB = &F->getEntryBlock();
             if (distances.find(FBB) != distances.end() && visited.insert(FBB).second) {
               worklist.push_back(FBB);
             }
@@ -513,7 +507,7 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
         }
       }
       for (auto SI = succ_begin(BB), SE = succ_end(BB); SI != SE; ++SI) {
-        BasicBlock *Succ = *SI;
+        auto *Succ = *SI;
         if (distances.find(Succ) != distances.end() && visited.insert(Succ).second) {
           worklist.push_back(Succ);
         }
@@ -521,7 +515,7 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
     }
   } else {
     for (const auto &kv : distances) {
-      BasicBlock *BB = kv.first;
+      auto *BB = kv.first;
       auto term = BB->getTerminator();
       auto branch = dyn_cast<BranchInst>(term);
       if (!branch || !branch->isConditional())

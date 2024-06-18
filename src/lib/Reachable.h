@@ -22,10 +22,10 @@ private:
   CallerMap callerByType;
 
   std::vector<std::pair<std::string, int> > targetList;
-  std::unordered_set<llvm::BasicBlock*> reachableBBs;
-  std::unordered_map<llvm::BasicBlock*, double> distances;
-  std::unordered_set<llvm::BasicBlock*> exitBBs;
-  std::unordered_set<llvm::BasicBlock*> entryBBs;
+  std::unordered_set<const llvm::BasicBlock*> reachableBBs;
+  std::unordered_map<const llvm::BasicBlock*, double> distances;
+  std::unordered_set<const llvm::BasicBlock*> exitBBs;
+  std::unordered_set<const llvm::BasicBlock*> entryBBs;
 
 public:
     ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList);
@@ -34,7 +34,7 @@ public:
     virtual void run(ModuleList &modules);
 
     // simple bfs pass
-    void collectReachable(std::deque<BasicBlock*> &worklist, std::unordered_set<BasicBlock*> &reachable);
+    void collectReachable(std::deque<const BasicBlock*> &worklist, std::unordered_set<const BasicBlock*> &reachable);
 
     // debug
     void dumpDistance(llvm::raw_ostream &OS, bool dumpSolution = false, bool dumpUnreachable = false);
