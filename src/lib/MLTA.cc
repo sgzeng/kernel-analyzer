@@ -417,8 +417,9 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 	if (!isa<ConstantAggregate>(Ini))
 		return false;
 
-	deque<pair<Type*, int>> NestedInit;
-	unordered_map<const Value*, pair<const Value*, int>> ContainersMap;
+	// deque<pair<Type*, int>> NestedInit;
+	using field_t = unordered_set<int>;
+	unordered_map<const Value*, unordered_map<const Value*, field_t>> ContainersMap;
 	unordered_set<const Value*> FuncOperands;
 	deque<const User*> LU;
 	visited_t Visited;
@@ -436,10 +437,12 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 		assert(!UTy->isFunctionTy());
 
 		if (StructType *STy = dyn_cast<StructType>(U->getType())) {
-			if (U->getNumOperands() > 0)
+			if (U->getNumOperands() > 0) {
 				assert(STy->getNumElements() == U->getNumOperands());
-			else
+			} else {
+				MLTA_DEBUG("NumOperands mismatch: " << *STy << " vs, " << *U << "\n");
 				continue;
+			}
 		}
 
 		for (auto oi = U->op_begin(), oe = U->op_end(); 
@@ -448,7 +451,16 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 			const Value *O = *oi;
 			Type *OTy = O->getType();
 
-			ContainersMap.insert({O, make_pair(U, oi->getOperandNo())});
+			if (isa<ConstantPointerNull>(O) || isa<ConstantInt>(O))
+				continue;
+
+			auto &Container = ContainersMap[O];
+			// if (!Container.empty() && Container.find(U) == Container.end()) {
+			// 	MLTA_DEBUG("[ERROR] Inconsistent container of " << *O
+			// 				<< "\n\tOld  " << *(Container.begin()->first)
+			// 				<< "\n\tNew: " << *U << "\n");
+			// }
+			Container[U].insert(oi->getOperandNo());
 
 			const Function *FoundF = NULL;
 			// Case 1: function address is assigned to a type
@@ -500,8 +512,6 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 			// object is assigned to a field of another composite-type
 			// object
 			else if (auto POTy = dyn_cast<PointerType>(OTy)) {
-				if (isa<ConstantPointerNull>(O))
-					continue;
 				// if the pointer points a composite type, conservatively
 				// treat it as a type cap (we cannot get the next-layer type
 				// if the type is a cap)
@@ -516,6 +526,7 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 			}
 			else {
 				// TODO: Type escaping?
+				MLTA_DEBUG("[ESCAPING] " << *O << "\n");
 			}
 
 			// Found a function
@@ -527,38 +538,44 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 					StoredFuncs.insert(FoundF);
 
 				// Add the function type to all containers
-				const Value *CV = O;
+				deque<const Value*> CVs;
+				CVs.push_back(O);
 				visited_t Visited; // to avoid loop
-				while (ContainersMap.find(CV) != ContainersMap.end()) {
+				while (!CVs.empty()) {
+					const Value *CV = CVs.front();
+					CVs.pop_front();
+					Visited.insert(CV);
+
 					auto Container = ContainersMap[CV];
 
-					Type *CTy = Container.first->getType();
-					unordered_set<size_t> TyHS;
-					if (StructType *STy = dyn_cast<StructType>(CTy)) {
-						structTypeHash(STy, TyHS);
-					} else
-						TyHS.insert(typeHash(CTy));
+					for (auto &[V, Offs] : Container) {
+						Type *CTy = V->getType();
+						unordered_set<size_t> TyHS;
+						if (StructType *STy = dyn_cast<StructType>(CTy))
+							structTypeHash(STy, TyHS);
+						else
+							TyHS.insert(typeHash(CTy));
 
-					MLTA_DEBUG("[INSERT-INIT] Container type: " << *CTy
-						<< "; Idx: " << Container.second
-						<< "\n\t --> FUNC: " << FoundF->getName() << "; Module: "
-						<< FoundF->getParent()->getName() << "\n");
+						MLTA_DEBUG("[INSERT-INIT] Container type: " << *CTy
+							<< "\t --> FUNC: " << FoundF->getName() << "; Module: "
+							<< FoundF->getParent()->getName() << "\n");
 
-					for (auto TyH : TyHS) {
+						for (auto TyH : TyHS) {
 #ifdef MLTA_FIELD_INSENSITIVE
-						typeIdxFuncsMap[TyH][0].insert(FoundF);
+							typeIdxFuncsMap[TyH][0].insert(FoundF);
 #else
-						typeIdxFuncsMap[TyH][Container.second].insert(FoundF);
+							for (auto Off : Offs) {
+								MLTA_DEBUG("\t Idx = " << Off << "\n");
+								typeIdxFuncsMap[TyH][Off].insert(FoundF);
+							}
 #endif
-						MLTA_DEBUG("[HASH] " << TyH << "\n");
+							MLTA_DEBUG("[HASH] " << TyH << "\n");
+						}
 
+						if (ContainersMap.find(V) != ContainersMap.end() &&
+							Visited.find(V) == Visited.end())
+							CVs.push_back(V);
 					}
-
-					Visited.insert(CV);
-					if (Visited.find(Container.first) != Visited.end())
-						break;
-
-					CV = Container.first;
 				}
 			}
 		}
