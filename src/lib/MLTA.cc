@@ -1,6 +1,6 @@
 //===-- MLTA.cc - multi-layer type analysis ---------------------===//
-// 
-// This pass employs multi-layer type analysis to resolve targets 
+//
+// This pass employs multi-layer type analysis to resolve targets
 // of indirect calls.
 //
 //===-----------------------------------------------------------===//
@@ -8,7 +8,7 @@
 #include "llvm/Pass.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/BasicBlock.h" 
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/Debug.h"
@@ -17,14 +17,14 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/CallGraph.h"
-#include "llvm/Support/raw_ostream.h"  
-#include "llvm/IR/InstrTypes.h" 
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h" 
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/CFG.h" 
+#include "llvm/IR/CFG.h"
 
 #include "TyPMCommon.h"
 #include "MLTA.h"
@@ -51,7 +51,7 @@ inline MLTA::hashidx_t MLTA::hashidx_c(size_t Hash, int Idx) {
 	return make_pair(Hash, Idx);
 }
 
-bool MLTA::fuzzyTypeMatch(Type *Ty1, Type *Ty2, 
+bool MLTA::fuzzyTypeMatch(Type *Ty1, Type *Ty2,
 		const Module *M1, const Module *M2) {
 
 	if (Ty1 == Ty2)
@@ -71,11 +71,11 @@ bool MLTA::fuzzyTypeMatch(Type *Ty1, Type *Ty2,
 	// TODO: more types to be supported.
 
 	// Make the type analysis conservative: assume general
-	// pointers, i.e., "void *" and "char *", are equivalent to 
+	// pointers, i.e., "void *" and "char *", are equivalent to
 	// any pointer type and integer type.
 	if (
 			(Ty1 == Int8PtrTy[M1] &&
-			 (Ty2->isPointerTy() || Ty2 == IntPtrTy[M2])) 
+			 (Ty2->isPointerTy() || Ty2 == IntPtrTy[M2]))
 			||
 			(Ty2 == Int8PtrTy[M1] &&
 			 (Ty1->isPointerTy() || Ty1 == IntPtrTy[M2]))
@@ -101,7 +101,7 @@ void MLTA::findCalleesWithType(const CallInst *CI, FuncSet &S) {
 	size_t CIH = callHash(CI);
 	if (MatchedFuncsMap.find(CIH) != MatchedFuncsMap.end()) {
 		if (!MatchedFuncsMap[CIH].empty())
-			S.insert(MatchedFuncsMap[CIH].begin(), 
+			S.insert(MatchedFuncsMap[CIH].begin(),
 					MatchedFuncsMap[CIH].end());
 		return;
 	}
@@ -213,19 +213,19 @@ void MLTA::unrollLoops(Function *F) {
 			// Two cases:
 			// 1. Latch Block has only one successor:
 			// 	for loop or while loop;
-			// 	In this case: set the Successor of Latch Block to the 
+			// 	In this case: set the Successor of Latch Block to the
 			//	successor block (out of loop one) of Header block
-			// 2. Latch Block has two successor: 
+			// 2. Latch Block has two successor:
 			// do-while loop:
 			// In this case: set the Successor of Latch Block to the
-			//  another successor block of Latch block 
+			//  another successor block of Latch block
 
 			// get the last instruction in the Latch block
 			Instruction *TI = LatchB->getTerminator();
 			// Case 1:
 			if (LatchB->getSingleSuccessor() != NULL) {
-				for (succ_iterator sit = succ_begin(HeaderB); 
-						sit != succ_end(HeaderB); ++sit) {  
+				for (succ_iterator sit = succ_begin(HeaderB);
+						sit != succ_end(HeaderB); ++sit) {
 
 					BasicBlock *SuccB = *sit;	
 					BasicBlockEdge BBE = BasicBlockEdge(HeaderB, SuccB);
@@ -241,7 +241,7 @@ void MLTA::unrollLoops(Function *F) {
 			}
 			// Case 2:
 			else {
-				for (succ_iterator sit = succ_begin(LatchB); 
+				for (succ_iterator sit = succ_begin(LatchB);
 						sit != succ_end(LatchB); ++sit) {
 
 					BasicBlock *SuccB = *sit;
@@ -259,11 +259,11 @@ void MLTA::unrollLoops(Function *F) {
 }
 
 bool MLTA::isCompositeType(Type *Ty) {
-	if (Ty->isStructTy() 
-			|| Ty->isArrayTy() 
+	if (Ty->isStructTy()
+			|| Ty->isArrayTy()
 			|| Ty->isVectorTy())
 		return true;
-	else 
+	else
 		return false;
 }
 
@@ -391,7 +391,7 @@ Type* MLTA::getRealType(const Value *V) {
 						}
 
 						StringRef typeName = DICTy->getName();
-						StructType *STy 
+						StructType *STy
 							= StructType::getTypeByName(BB->getModule()->getContext(),
 									"struct." + typeName.str());
 						if (STy) {
@@ -445,7 +445,7 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 			}
 		}
 
-		for (auto oi = U->op_begin(), oe = U->op_end(); 
+		for (auto oi = U->op_begin(), oe = U->op_end();
 				oi != oe; ++oi) {
 
 			const Value *O = *oi;
@@ -490,7 +490,7 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 			}
 			// now consider if it is a bitcast from a function
 			// address
-			else if (auto CO = dyn_cast<BitCastOperator>(O)) { 
+			else if (auto CO = dyn_cast<BitCastOperator>(O)) {
 				// Virtual functions will always be cast by
 				// inserting the first parameter
 				auto CF = dyn_cast<Function>(CO->getOperand(0));
@@ -591,14 +591,14 @@ bool MLTA::typeConfineInFunction(const Function *F) {
 
 	for (auto i = inst_begin(F), e = inst_end(F); i != e; ++i) {
 
-		const Instruction *I = &*i;
+		auto I = &*i;
 
 		if (auto SI = dyn_cast<StoreInst>(I)) {
 			auto PO = SI->getPointerOperand();
 			auto VO = SI->getValueOperand();
 
 			auto CF = getBaseFunction(VO->stripPointerCasts());
-			if (!CF) 
+			if (!CF)
 				continue;
 			if (F->isIntrinsic())
 				continue;
@@ -642,12 +642,12 @@ bool MLTA::typeConfineInFunction(const Function *F) {
 
 bool MLTA::typePropInFunction(const Function *F) {
 
-	// Two cases for propagation: store and cast. 
+	// Two cases for propagation: store and cast.
 	// For store, LLVM may use memcpy
 	unordered_set<const User*> CastSet;
 	for (auto i = inst_begin(F), e = inst_end(F); i != e; ++i) {
 
-		const Instruction *I = &*i;
+		auto I = &*i;
 
 		const Value *PO = NULL, *VO = NULL;
 		if (auto SI = dyn_cast<StoreInst>(I)) {
@@ -760,7 +760,7 @@ void MLTA::collectAliasStructPtr(const Function *F) {
 	unordered_set<const Value*> ToErase;
 	for (auto i = inst_begin(F), e = inst_end(F); i != e; ++i) {
 
-		const Instruction *I = &*i;
+		auto I = &*i;
 
 		if (auto CI = dyn_cast<CastInst>(I)) {
 			auto FromV = CI->getOperand(0);
@@ -843,7 +843,7 @@ void MLTA::propagateType(const Value *ToV, Type *FromTy, int Idx) {
 	}
 }
 
-void MLTA::intersectFuncSets(FuncSet &FS1, FuncSet &FS2, 
+void MLTA::intersectFuncSets(FuncSet &FS1, FuncSet &FS2,
 		FuncSet &FS) {
 	FS.clear();
 	for (auto F : FS1) {
@@ -879,7 +879,7 @@ void MLTA::saveCalleesInfo(const CallInst *CI, FuncSet &FS,
 #else
 	trimPathSlash(CallerFN, 2);
 #endif
-	auto Loc = getSourceLocation(CI); 
+	auto Loc = getSourceLocation(CI);
 	if (!Loc)
 		return;
 	int CallerLn = Loc->getLine();
@@ -895,7 +895,7 @@ void MLTA::saveCalleesInfo(const CallInst *CI, FuncSet &FS,
 		}
 #else
 		trimPathSlash(CalleeFN, 2);
-#endif 
+#endif
 		int CalleeLn = CalleeSP->getLine();
 		size_t calleehash = strIntHash(CalleeFN, CalleeLn);
 		srcLnHashSet.insert(calleehash);
@@ -903,7 +903,7 @@ void MLTA::saveCalleesInfo(const CallInst *CI, FuncSet &FS,
 		for (int i = CalleeLn - 2; i < CalleeLn + 5; ++i) {
 			if (mlta)
 				calleesSrcMap[callerhash].insert(strIntHash(CalleeFN, i));
-			else 
+			else
 				L1CalleesSrcMap[callerhash].insert(strIntHash(CalleeFN, i));
 		}
 	}
@@ -1071,7 +1071,7 @@ bool MLTA::getGEPLayerTypes(const GEPOperator *GEP, typelist_t &TyList) {
 	auto PO = GEP->getPointerOperand();
 	Type *ETy = GEP->getSourceElementType();
 
-	vector<int> Indices; 
+	vector<int> Indices;
 	deque<typeidx_t> TmpTyList;
 	// FIXME: handle downcasting: the GEP may get a field outside the
 	// base type
@@ -1079,10 +1079,10 @@ bool MLTA::getGEPLayerTypes(const GEPOperator *GEP, typelist_t &TyList) {
 	auto ConstI = dyn_cast<ConstantInt>(GEP->idx_begin()->get());
 	if (ConstI && ConstI->getSExtValue() != 0) {
 
-		// 
+		//
 		// FIXME: The following is an attempt to handle the intentional
 		// out-of-bound access; however, it is not fully working, so I
-		// skip it for now 
+		// skip it for now
 		//
 		if (StructType *STy = dyn_cast<StructType>(ETy)) {
 
@@ -1109,7 +1109,7 @@ bool MLTA::getGEPLayerTypes(const GEPOperator *GEP, typelist_t &TyList) {
 				ETy = RTy;
 
 			if ((BV || RTy) && I) {
-				APInt Offset (ConstI->getBitWidth(), 
+				APInt Offset (ConstI->getBitWidth(),
 						ConstI->getZExtValue());
 				Type *BaseTy = ETy;
 				SmallVector<APInt> IndiceV = DLMap[I->getModule()]
@@ -1167,7 +1167,7 @@ bool MLTA::getGEPLayerTypes(const GEPOperator *GEP, typelist_t &TyList) {
 		Type *Ty0 = STy->getElementType(0);
 		for (auto U : GEP->users()) {
 			if (auto BCO = dyn_cast<BitCastOperator>(U)) {
-				if (PointerType *PTy 
+				if (PointerType *PTy
 						= dyn_cast<PointerType>(BCO->getType())) {
 
 					Type *ToTy = PTy->getPointerElementType();
@@ -1229,7 +1229,7 @@ bool MLTA::nextLayerBaseTypeWL(const Value *V, typelist_t &TyList,
 			NextV = BCO->getOperand(0);
 			VL.push_back(BCO->getOperand(0));
 		}
-		// Phi and Select 
+		// Phi and Select
 		else if (auto PN = dyn_cast<PHINode>(CV)) {
 			// FIXME: tracking incoming values
 			Value * PV = PN->getIncomingValue(PN->getNumIncomingValues() - 1);
@@ -1256,7 +1256,7 @@ bool MLTA::nextLayerBaseTypeWL(const Value *V, typelist_t &TyList,
 
 // Get the composite type of the lower layer. Layers are split by
 // memory loads or GEP
-bool MLTA::nextLayerBaseType(const Value *V, typelist_t &TyList, 
+bool MLTA::nextLayerBaseType(const Value *V, typelist_t &TyList,
 		const Value* &NextV, visited_t &Visited) {
 
 	if (!V || isa<Argument>(V)) {
@@ -1290,7 +1290,7 @@ bool MLTA::nextLayerBaseType(const Value *V, typelist_t &TyList,
 		NextV = BCO->getOperand(0);
 		return nextLayerBaseType(BCO->getOperand(0), TyList, NextV, Visited);
 	}
-	// Phi and Select 
+	// Phi and Select
 	else if (auto PN = dyn_cast<PHINode>(V)) {
 		// FIXME: tracking incoming values
 		bool ret = false;
@@ -1328,7 +1328,7 @@ bool MLTA::nextLayerBaseType(const Value *V, typelist_t &TyList,
 	return false;
 }
 
-bool MLTA::getDependentTypes(Type *Ty, int Idx, 
+bool MLTA::getDependentTypes(Type *Ty, int Idx,
 		set<hashidx_t> &PropSet) {
 
 	deque<hashidx_t> LT;
@@ -1387,7 +1387,7 @@ bool MLTA::getTargetsWithLayerType(size_t TyHash, int Idx,
 	}
 	else {
 		FS = typeIdxFuncsMap[TyHash][Idx];
-		FS.insert(typeIdxFuncsMap[TyHash][-1].begin(), 
+		FS.insert(typeIdxFuncsMap[TyHash][-1].begin(),
 				typeIdxFuncsMap[TyHash][-1].end());
 	}
 
@@ -1395,7 +1395,7 @@ bool MLTA::getTargetsWithLayerType(size_t TyHash, int Idx,
 }
 
 // The API for MLTA: it returns functions for an indirect call
-bool MLTA::findCalleesWithMLTA(const CallInst *CI, 
+bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 		FuncSet &FS) {
 
 	// Initial set: first-layer results
@@ -1462,12 +1462,12 @@ bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 			else {
 
 #ifdef SOUND_MODE
-				if (typeEscapeSet.find(TyIdxHash) 
+				if (typeEscapeSet.find(TyIdxHash)
 						!= typeEscapeSet.end()) {
 
 					break;
 				}
-				if (typeEscapeSet.find(TyIdxHash_1) 
+				if (typeEscapeSet.find(TyIdxHash_1)
 						!= typeEscapeSet.end()) {
 					break;
 				}
@@ -1479,11 +1479,11 @@ bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 				// be propagated to the next layer.
 				if (PrevLayerTy) {
 					if ((typeIdxPropMap[typeHash(TyIdx.first)]
-								[TyIdx.second].find(hashidx_c(typeHash(PrevLayerTy), PrevIdx)) 
+								[TyIdx.second].find(hashidx_c(typeHash(PrevLayerTy), PrevIdx))
 								!= typeIdxPropMap[typeHash(TyIdx.first)]
 								[TyIdx.second].end()) ||
 							typeIdxPropMap[typeHash(TyIdx.first)]
-							[-1].find(hashidx_c(typeHash(PrevLayerTy), PrevIdx)) 
+							[-1].find(hashidx_c(typeHash(PrevLayerTy), PrevIdx))
 							!= typeIdxPropMap[typeHash(TyIdx.first)]
 							[-1].end()) {
 						break;
@@ -1563,7 +1563,7 @@ while (!LV.empty()) {
 		else
 			continue;
 	}
-	else if (BitCastOperator *BCO = 
+	else if (BitCastOperator *BCO =
 			dyn_cast<BitCastOperator>(CV)) {
 		int Idx;
 		if (Type *BTy = getBaseType(CV, Idx)) {
@@ -1627,15 +1627,15 @@ bool MLTA::typeConfineInStore(StoreInst *SI) {
 	// Special handling for storing VTable pointers
 	//
 	if (BitCastOperator *BCO = dyn_cast<BitCastOperator>(VO)) {
-		if (GEPOperator *GEP = 
+		if (GEPOperator *GEP =
 				dyn_cast<GEPOperator>(BCO->getOperand(0))) {
-			if (Value *VT = 
+			if (Value *VT =
 					getVTable(GEP->getPointerOperand())) {
 
 				int Idx; Value *NextV;
 				if (Type *BTy = nextLayerBaseType(PO, Idx, NextV)) {
 					FuncSet FS = VTableFuncsMap[VT];
-					typeIdxFuncsMap[typeHash(BTy)][0].insert(FS.begin(), 
+					typeIdxFuncsMap[typeHash(BTy)][0].insert(FS.begin(),
 							FS.end());
 				}
 			}
@@ -1685,14 +1685,14 @@ bool MLTA::typeConfineInStore(StoreInst *SI) {
 		if (Type *VBTy = getBaseType(VO, IdxV)) {
 
 			//typeConfineMap[typeIdxHash(PBTy,
-			//		IdxP)].insert(typeHash(VBTy)); 
+			//		IdxP)].insert(typeHash(VBTy));
 			propagateType(PO, VBTy);
 
 			return true;
 		}
 		else {
 			if (isa<BitCastOperator>(VO) && !isa<CastInst>(VO)) {
-				Value * FV = 
+				Value * FV =
 					dyn_cast<BitCastOperator>(VO)->getOperand(0);
 				if (Function *F = dyn_cast<Function>(FV)) {
 					typeIdxFuncsMap[typeHash(PBTy)][IdxP].insert(F);
@@ -1726,7 +1726,7 @@ bool MLTA::typeConfineInStore(StoreInst *SI) {
 		}
 	}
 
-	for (auto oi = U->op_begin(), oe = U->op_end(); 
+	for (auto oi = U->op_begin(), oe = U->op_end();
 			oi != oe; ++oi) {
 
 		Value *O = *oi;
@@ -1807,7 +1807,7 @@ bool MLTA::typeConfineInStore(StoreInst *SI) {
 		// composite type and discard it
 
 		Value *From = Cast->getOperand(0);
-		Value *To = Cast; 
+		Value *To = Cast;
 
 		//int IdxTo;
 		//Value *NextV;

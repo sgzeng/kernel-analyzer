@@ -16,7 +16,7 @@ class MLTA {
 		hashidx_t hashidx_c(size_t Hash, int Idx);
 
 
-		// Statistics 
+		// Statistics
 		unsigned NumFunctions = 0;
 		unsigned NumFirstLayerTypeCalls = 0;
 		unsigned NumSecondLayerTypeCalls = 0;
@@ -89,12 +89,12 @@ class MLTA {
 		Type *getBaseType(const Value *V, visited_t &Visited);
 		Type *_getPhiBaseType(const PHINode *PN, visited_t &Visited);
 		const Function *getBaseFunction(const Value *V);
-		bool nextLayerBaseType(const Value *V, typelist_t &TyList, 
+		bool nextLayerBaseType(const Value *V, typelist_t &TyList,
 				const Value* &NextV, visited_t &Visited);
-		bool nextLayerBaseTypeWL(const Value *V, typelist_t &TyList, 
+		bool nextLayerBaseTypeWL(const Value *V, typelist_t &TyList,
 				const Value* &NextV);
 		bool getGEPLayerTypes(const GEPOperator *GEP, typelist_t &TyList);
-		bool getBaseTypeChain(typelist_t &Chain, const Value *V, 
+		bool getBaseTypeChain(typelist_t &Chain, const Value *V,
 				bool &Complete);
 		bool getDependentTypes(Type *Ty, int Idx, set<hashidx_t> &PropSet);
 
@@ -104,7 +104,7 @@ class MLTA {
 		////////////////////////////////////////////////////////////////
 		void confineTargetFunction(const Value *V, const Function *F);
 		void intersectFuncSets(FuncSet &FS1, FuncSet &FS2,
-				FuncSet &FS); 
+				FuncSet &FS);
 		bool typeConfineInInitializer(const GlobalVariable *GV);
 		bool typeConfineInFunction(const Function *F);
 		bool typePropInFunction(const Function *F);

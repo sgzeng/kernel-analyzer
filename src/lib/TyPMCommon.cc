@@ -47,12 +47,12 @@ string getFileName(const DILocation *Loc, const DISubprogram *SP) {
 /// Check if the value is a constant.
 bool isConstant(const Value *V) {
 	// Invalid input.
-	if (!V) 
+	if (!V)
 		return false;
 
 	// The value is a constant.
 	auto *Ct = dyn_cast<Constant>(V);
-	if (Ct) 
+	if (Ct)
 		return true;
 
 	return false;
@@ -247,8 +247,8 @@ void printSourceCodeInfo(const Function *F, string Tag) {
 			<< " +" << SP->getLine()
 #ifdef PRINT_SOURCE_LINE
 			<< " "
-			<< F->getName() 
-			//<< "\033[35m" << line << "\033[0m" 
+			<< F->getName()
+			//<< "\033[35m" << line << "\033[0m"
 #endif
 			<<'\n';
 	}
@@ -294,7 +294,7 @@ string getMacroInfo(const Value *V) {
 	const char *filename = FN.c_str();
 	filename = strchr(filename, '/') + 1;
 	filename = strchr(filename, '/') + 1;
-	int idx = filename - FN.c_str();
+	// int idx = filename - FN.c_str();
 
 	while(line[0] == ' ' || line[0] == '\t')
 		line.erase(line.begin());
@@ -340,7 +340,7 @@ void getSourceCodeInfo(Value *V, string &file,
 int8_t getArgNoInCall(CallInst *CI, Value *Arg) {
 
 	int8_t Idx = 0;
-	for (auto AI = CI->arg_begin(), E = CI->arg_end(); 
+	for (auto AI = CI->arg_begin(), E = CI->arg_end();
 			AI != E; ++AI) {
 		if (*AI == Arg) {
 			return Idx;
@@ -373,7 +373,7 @@ void LoadElementsStructNameMap(vector<pair<Module*, StringRef>> &Modules) {
 				continue;
 
 			string strSTy = structTyStr(STy);
-			elementsStructNameMap[strSTy].insert(STy->getName());  
+			elementsStructNameMap[strSTy].insert(STy->getName());
 		}
 	}
 }
@@ -407,7 +407,7 @@ string funcTypeString(const FunctionType *FTy) {
 		PTy->print(rso);
 		output += rso.str();
 		//output += to_string(PTy->getTypeID());
-		//output += ","; 
+		//output += ",";
 	}
 	return output;
 }
@@ -439,7 +439,7 @@ size_t funcHash(const Function *F, bool withName) {
 	}
 #endif
 	// process string
-	cleanString(output);
+	// cleanString(output);
 
 	return str_hash(output);
 }
@@ -486,7 +486,7 @@ void structTypeHash(StructType *STy, unordered_set<size_t> &HSet) {
 	}
 	else {
 		string sstr = structTyStr(STy);
-		if (elementsStructNameMap.find(sstr) 
+		if (elementsStructNameMap.find(sstr)
 				!= elementsStructNameMap.end()) {
 			for (auto SStr : elementsStructNameMap[sstr]) {
 				ty_str = SStr.str();
@@ -509,7 +509,7 @@ size_t typeHash(Type *Ty) {
 		}
 		else {
 			string sstr = structTyStr(STy);
-			if (elementsStructNameMap.find(sstr) 
+			if (elementsStructNameMap.find(sstr)
 					!= elementsStructNameMap.end()) {
 				ty_str = elementsStructNameMap[sstr].begin()->str();
 			}

@@ -41,7 +41,7 @@ class TyPM : public MLTA {
 			}
 		}
 
-		// 
+		//
 		// Functions that are out of the analysis scope: definition, data
 		// flows, etc. Common causes include linktime behaviors and assembly
 		//

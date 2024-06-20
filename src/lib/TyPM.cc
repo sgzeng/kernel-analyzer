@@ -1,14 +1,14 @@
 //===-- TyPM.cc - type-based dependence analysisgraph------------===//
-// 
+//
 // This pass performs module-level, type-based dependence analysis,
-// which identifies dependent modules of a given pair<type, module>. 
+// which identifies dependent modules of a given pair<type, module>.
 //
 //===-----------------------------------------------------------===//
 
 #include "llvm/Pass.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/BasicBlock.h" 
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/Debug.h"
@@ -17,14 +17,14 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/CallGraph.h"
-#include "llvm/Support/raw_ostream.h"  
-#include "llvm/IR/InstrTypes.h" 
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h" 
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/CFG.h" 
+#include "llvm/IR/CFG.h"
 
 #include "TyPMCommon.h"
 #include "TyPMPass.h"
@@ -34,6 +34,8 @@
 #include <vector>
 #include <iomanip>
 
+#define TYPM_LOG(stmt) KA_LOG(2, "TyPM: " << stmt)
+#define TYPM_DEBUG(stmt) KA_LOG(3, "TyPM: " << stmt)
 
 using namespace llvm;
 
@@ -80,7 +82,7 @@ bool TyPM::isContainerTy(Type *Ty) {
 /////////////////////////////////////////////////////////////////////
 
 
-void TyPM::addPropagation(const Module *ToM, const Module *FromM, Type *Ty, 
+void TyPM::addPropagation(const Module *ToM, const Module *FromM, Type *Ty,
 		bool isICall) {
 	size_t TyH = typeHash(Ty);
 #if 0	
@@ -154,6 +156,7 @@ void TyPM::findCastsInGV(const GlobalVariable * GV, userset_t &CastSet) {
 				if (auto CO = dyn_cast<BitCastOperator>(O)) {
 
 					// Record the cast
+					TYPM_DEBUG("Found bitcast: " << *CO << " in GV: " << GV->getName() << "\n");
 					CastSet.insert(CO);
 
 					auto OU = dyn_cast<User>(CO->getOperand(0));
@@ -166,14 +169,13 @@ void TyPM::findCastsInGV(const GlobalVariable * GV, userset_t &CastSet) {
 						LU.push_back(OU);
 				}
 			}
-			// If it is a composite type 
+			// If it is a composite type
 			else if (isContainerTy(OTy)) {
 
 				// Continue analyzing nested composite types
 				auto OU = dyn_cast<User>(O);
 				LU.push_back(OU);
 			}
-
 		}
 	}
 }
@@ -212,7 +214,7 @@ void TyPM::processCasts(userset_t &CastSet, const Module *M) {
 
 		Type *ETyFrom = TyFrom->getPointerElementType();
 		Type *ETyTo = TyTo->getPointerElementType();
-		if (!isTargetTy(ETyFrom) && !isContainerTy(ETyFrom) 
+		if (!isTargetTy(ETyFrom) && !isContainerTy(ETyFrom)
 				&& !isTargetTy(ETyTo) && !isContainerTy(ETyTo)) {
 			continue;
 		}
@@ -230,7 +232,7 @@ void TyPM::processCasts(userset_t &CastSet, const Module *M) {
 
 
 /////////////////////////////////////////////////////////////////////
-// 
+//
 // The following functions analyze globals and function calls for
 // potential types of data flows
 //
@@ -374,7 +376,7 @@ void TyPM::findTargetTypesInInitializer(const GlobalVariable * GV,
 	ParsedGlobalTypesMap[GV] = TargetTypes;
 }
 
-// Collect types from reads and writes against a value 
+// Collect types from reads and writes against a value
 bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 		typeset_t &WrittenTypes, const Module *M) {
 
@@ -393,7 +395,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 			continue;
 		Visited.insert(CV);
 
-		if (!isa<PointerType>(CV->getType()) && 
+		if (!isa<PointerType>(CV->getType()) &&
 				!CV->getType()->isIntegerTy(64))
 			continue;
 
@@ -401,7 +403,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 
 			Type *Ty = I->getType();
 
-			// 
+			//
 			// Just continue the tracking for the following cases
 			//
 			if (Operator::getOpcode(I) == Instruction::GetElementPtr) {
@@ -426,7 +428,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 				auto VO = SI->getValueOperand();
 				auto PO = SI->getPointerOperand();
 				// Store something to the value
-				if (PO == CV) { 
+				if (PO == CV) {
 					typeset_t TySet;
 					findTargetTypesInValue(VO, TySet, M);
 					for (auto FTy : TySet)
@@ -451,7 +453,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 				LV.push_back(LI);
 			}
 
-			// 
+			//
 			// Handling calls with conservative policy: Assume escaping if
 			// the pointer is passed to function in other modules
 			//
@@ -472,7 +474,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 								LV.push_back(Arg);
 								continue;
 							}
-							else 
+							else
 								continue;
 						}
 						else
@@ -502,7 +504,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 				}
 #endif
 			}
-			// 
+			//
 			// Other cases
 			//
 			else {
@@ -515,7 +517,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 
 
 // Parse stores and loads against a global
-void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V, 
+void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 		const Module *M, visited_t &Visited) {
 
 	if (Visited.find(V) != Visited.end())
@@ -574,13 +576,13 @@ void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 				}
 			}
 
-		} 
+		}
 		else if (auto LI = dyn_cast<LoadInst>(I)) {
 
 			auto PO = LI->getPointerOperand();
 			auto GO = dyn_cast<GEPOperator>(PO);
 			if (!isa<GetElementPtrInst>(PO) && GO) {
-				Type * ETy = 
+				Type * ETy =
 					dyn_cast<PointerType>(GO->getOperand(0)
 							->getType())->getPointerElementType();
 				if (isTargetTy(ETy)) {
@@ -621,16 +623,16 @@ void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 				addGVToModuleType(ETy, GV, M);
 			}
 #ifdef TYPE_ELEVATION
-			else if (isContainerTy(ETy)) 
+			else if (isContainerTy(ETy))
 				addGVToModuleType(ETy, GV, M);
 #endif
 			parseUsesOfGV(GV, I, M, Visited);
 
-		} 
+		}
 		else if (Operator::getOpcode(I) == Instruction::BitCast) {
 			// Cast Instruction into GV
 			parseUsesOfGV(GV, I, M, Visited);
-		} 
+		}
 		else if (auto Call = dyn_cast<CallInst>(I)) {
 			auto EGV = Ctx->Gobjs[GV->getGUID()];
 			if (EGV && EGV->hasInitializer()) {
@@ -641,7 +643,7 @@ void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 				}
 			}
 			continue;
-		} 
+		}
 		else {
 			// ?
 		}
@@ -679,12 +681,12 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 
 				// First handle implicit flows where functions are
 				// used as function arguments
-				auto CI_Arg = CI->getArgOperand(AI - CF->arg_begin()); 
+				auto CI_Arg = CI->getArgOperand(AI - CF->arg_begin());
 				if (auto AF = dyn_cast<Function>(CI_Arg)) {
 					if (AF->isDeclaration())
 						AF = Ctx->Funcs[AF->getGUID()];
 					if (AF) {
-						addPropagation(CallerM, AF->getParent(), 
+						addPropagation(CallerM, AF->getParent(),
 								ETy, CI->isIndirectCall());
 					}
 				}
@@ -722,13 +724,13 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 
 			// Avoid repeatation for performance
 			if (CI->isIndirectCall()) {
-				if (ParsedModuleTypeICallMap[MP].find(ATy) 
+				if (ParsedModuleTypeICallMap[MP].find(ATy)
 						!= ParsedModuleTypeICallMap[MP].end())
 					continue;
 				ParsedModuleTypeICallMap[MP].insert(ATy);
 			}
 			else {
-				if (ParsedModuleTypeDCallMap[MP].find(ATy) 
+				if (ParsedModuleTypeDCallMap[MP].find(ATy)
 						!= ParsedModuleTypeDCallMap[MP].end())
 					continue;
 				ParsedModuleTypeDCallMap[MP].insert(ATy);
@@ -770,7 +772,7 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 	Type *RTy = CI->getType();
 
 	typeset_t ReadTypes, WrittenTypes;
-	bool UseParsable = parseUsesOfValue(CI, ReadTypes, WrittenTypes, 
+	bool UseParsable = parseUsesOfValue(CI, ReadTypes, WrittenTypes,
 			CI->getFunction()->getParent());
 
 	if (UseParsable) {
@@ -797,13 +799,13 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 	else {
 		// Avoid repeatation for performance
 		if (CI->isIndirectCall()) {
-			if (ParsedModuleTypeICallMap[MP].find(RTy) 
+			if (ParsedModuleTypeICallMap[MP].find(RTy)
 					!= ParsedModuleTypeICallMap[MP].end())
 				return;
 			ParsedModuleTypeICallMap[MP].insert(RTy);
 		}
 		else {
-			if (ParsedModuleTypeDCallMap[MP].find(RTy) 
+			if (ParsedModuleTypeDCallMap[MP].find(RTy)
 					!= ParsedModuleTypeDCallMap[MP].end())
 				return;
 			ParsedModuleTypeDCallMap[MP].insert(RTy);
@@ -836,13 +838,13 @@ void TyPM::findTargetTypesInValue(const Value *V, typeset_t &TargetTypes,
 
 	Type *VTy = V->getType();
 	// Check cached results
-	if (ParsedTypeMap.find(make_pair(M, VTy)) 
+	if (ParsedTypeMap.find(make_pair(M, VTy))
 			!= ParsedTypeMap.end()) {
 		TargetTypes = ParsedTypeMap[make_pair(M, VTy)];
 		return;
 	}
 
-	deque<Type*> LT; 
+	deque<Type*> LT;
 	LT.push_back(VTy);
 	SmallPtrSet<Type*, 8> Visited;
 
@@ -874,7 +876,7 @@ void TyPM::findTargetTypesInValue(const Value *V, typeset_t &TargetTypes,
 			if (PTy == Int8PtrTy[M]) {
 				TargetTypes.insert(Int8PtrTy[M]);
 			}
-			else 
+			else
 				// Continue with the element type
 				LT.push_back(PTy->getPointerElementType());
 
@@ -890,7 +892,7 @@ void TyPM::findTargetTypesInValue(const Value *V, typeset_t &TargetTypes,
 		}
 		// Handle composite type
 		else if (isContainerTy(Ty)) {
-			for (Type::subtype_iterator I = Ty->subtype_begin(), 
+			for (Type::subtype_iterator I = Ty->subtype_begin(),
 					E = Ty->subtype_end();
 					I != E; ++I) {
 				Type *SubTy = (Type *)*I;
@@ -968,6 +970,9 @@ void TyPM::findStoredTypeIdxInFunction(const Function * F) {
 			if (!TyList.empty()) {
 				typeidx_t TI = TyList.front();
 				storedTypeIdxMap[F->getParent()][TI.first].insert(TI.second);
+				for (auto &TI : TyList) {
+					TYPM_DEBUG("Stored list: " << *(TI.first) << " , idx = " << TI.second << "\n");
+				}
 				continue;
 			}
 			visited_t Visited;
@@ -1024,7 +1029,7 @@ void TyPM::getDependentModulesV(const Value* TV, const Module *M,
 		// negatives
 		//
 		// Externality check
-		if (storedTypeIdxMap[M].find(TyIdx.first) 
+		if (storedTypeIdxMap[M].find(TyIdx.first)
 				!= storedTypeIdxMap[M].end()) {
 			if ((storedTypeIdxMap[M][TyIdx.first].find(TyIdx.second)
 						!= storedTypeIdxMap[M][TyIdx.first].end())
@@ -1117,7 +1122,7 @@ bool TyPM::resolveFunctionTargets() {
 		oldModuleCount += Ctx->Modules.size();
 		auto CallerM = CI->getModule();
 		// CallBase *CB = dyn_cast<CallBase>(CI);
-		Type *FuncType = CI->getFunctionType(); 
+		Type *FuncType = CI->getFunctionType();
 		modset_t MSet;
 		getDependentModulesV(CI->getCalledOperand(), CallerM, MSet);
 		MSet.insert(CallerM);
@@ -1135,7 +1140,7 @@ bool TyPM::resolveFunctionTargets() {
 				// Do not remove out-of-analysis-scope functions which
 				// can still be valid targets
 				string FN = Callee->getName().str();
-				if ((OutScopeFuncNames.find(FN) 
+				if ((OutScopeFuncNames.find(FN)
 							== OutScopeFuncNames.end())
 						//&& (StoredFuncs.find(Callee) != StoredFuncs.end())
 				   ) {
@@ -1145,7 +1150,7 @@ bool TyPM::resolveFunctionTargets() {
 					printSourceCodeInfo(Callee, "REMOVED");
 #endif
 				}
-				else { 
+				else {
 					outScopeCount += 1;
 				}
 			}
@@ -1214,7 +1219,7 @@ bool TyPM::resolveStructTargets() {
 				criticalType = true;
 			}
 		}
-		if ((PO->getType() != Int8PtrTy[SI->getModule()]) 
+		if ((PO->getType() != Int8PtrTy[SI->getModule()])
 				&& !criticalType)
 			continue;
 
