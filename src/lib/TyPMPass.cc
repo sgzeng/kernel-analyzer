@@ -40,83 +40,7 @@
 
 using namespace llvm;
 
-int ENABLE_MLTA = 0;
-int ENABLE_TYDM = 1;
 int MAX_PHASE_CG = 2;
-
-static void LoadTraces(map<size_t, set<size_t>> &hashedTraces,
-		map<size_t, SrcLn> &hashSrcMap) {
-
-	string exepath = sys::fs::getMainExecutable(NULL, NULL);
-	string exedir = exepath.substr(0, exepath.find_last_of('/'));
-	string line;
-#ifdef EVAL_FN_FIRFOX
-	ifstream tracefile(exedir + "/../../data/traces-ff.list");
-#else 
-	ifstream tracefile(exedir + "/../../data/traces.list");
-#endif
-
-	SrcLn CallerSrcLn("", 0);
-	SrcLn CalleeSrcLn("", 0);
-	if (tracefile.is_open()) {
-		while (!tracefile.eof()) {
-			getline (tracefile, line);
-			if (line.length() == 0)
-				continue;
-			size_t pos = line.find("CALLER:");
-			if (pos != string::npos) {
-				line = line.substr(pos + 8);
-				pos = line.rfind(":");
-				if (pos == string::npos) {
-					CallerSrcLn.Ln = -1;
-					continue;
-				}
-				CallerSrcLn.Ln = stoi(line.substr(pos + 1));
-				CallerSrcLn.Src = line.substr(0, pos);
-#ifdef EVAL_FN_FIRFOX
-				pos = CallerSrcLn.Src.find("gecko-dev");
-				if (pos != string::npos)
-					CallerSrcLn.Src = CallerSrcLn.Src.substr(pos + 10);
-#endif
-				hashSrcMap[strIntHash(CallerSrcLn.Src, CallerSrcLn.Ln)] = CallerSrcLn;
-
-				continue;
-			}
-			pos = line.find("CALLEE:");
-			if (pos != string::npos) {
-				if (CallerSrcLn.Ln == -1)
-					continue;
-
-				line = line.substr(pos + 8);
-				pos = line.rfind(":");
-				if (pos == string::npos)
-					continue;
-				CalleeSrcLn.Ln = stoi(line.substr(pos + 1));
-				CalleeSrcLn.Src = line.substr(0, pos);
-#ifdef EVAL_FN_FIRFOX
-				pos = CalleeSrcLn.Src.find("gecko-dev");
-				if (pos != string::npos) {
-					CalleeSrcLn.Src = CalleeSrcLn.Src.substr(pos + 10);
-				}
-#endif
-				// Assume every callee is preceded with a caller
-				size_t callerhash = strIntHash(CallerSrcLn.Src, CallerSrcLn.Ln);
-				size_t calleehash = strIntHash(CalleeSrcLn.Src, CalleeSrcLn.Ln);
-				hashedTraces[callerhash].insert(calleehash);
-				hashSrcMap[calleehash] = CalleeSrcLn;
-
-				continue;
-			}
-		}
-		tracefile.close();
-	}
-}
-
-
-//
-// Static variables
-//
-int TyPMCGPass::AnalysisPhase = 1;
 
 //
 // Implementation
@@ -360,20 +284,23 @@ bool TyPMCGPass::doFinalization(Module *M) {
 
 			if (CI->isIndirectCall()) {
 				NumIndirectCallTargets += MLTA::Ctx->Callees[CI].size();
+#if PRINT_ICALL_TARGET
 				printTargets(MLTA::Ctx->Callees[CI], CI);
+#endif
 			}
 		}
-	}
 
-	TYPM_LOG("############## Result Statistics ##############\n");
-	TYPM_LOG("# Number of indirect calls: \t\t\t" << MLTA::Ctx->IndirectCallInsts.size() << "\n");
-	TYPM_LOG("# Number of indirect calls with targets: \t" << NumValidIndirectCalls << "\n");
-	TYPM_LOG("# Number of indirect-call targets: \t\t" << NumIndirectCallTargets << "\n");
-	TYPM_LOG("# Number of address-taken functions: \t\t" << MLTA::Ctx->AddressTakenFuncs.size() << "\n");
-	TYPM_LOG("# Number of second layer calls: \t\t" << NumSecondLayerTypeCalls << "\n");
-	TYPM_LOG("# Number of second layer targets: \t\t" << NumSecondLayerTargets << "\n");
-	TYPM_LOG("# Number of first layer calls: \t\t\t" << NumFirstLayerTypeCalls << "\n");
-	TYPM_LOG("# Number of first layer targets: \t\t" << NumFirstLayerTargets << "\n");
+		TYPM_LOG("############## Result Statistics ##############\n");
+		TYPM_LOG("# Number of indirect calls: \t\t\t" << MLTA::Ctx->IndirectCallInsts.size() << "\n");
+		TYPM_LOG("# Number of indirect calls with targets: \t" << NumValidIndirectCalls << "\n");
+		TYPM_LOG("# Number of indirect-call targets: \t\t" << NumIndirectCallTargets << "\n");
+		TYPM_LOG("# Number of address-taken functions: \t\t" << MLTA::Ctx->AddressTakenFuncs.size() << "\n");
+		TYPM_LOG("# Number of second layer calls: \t\t" << NumSecondLayerTypeCalls << "\n");
+		TYPM_LOG("# Number of second layer targets: \t\t" << NumSecondLayerTargets << "\n");
+		TYPM_LOG("# Number of first layer calls: \t\t\t" << NumFirstLayerTypeCalls << "\n");
+		TYPM_LOG("# Number of first layer targets: \t\t" << NumFirstLayerTargets << "\n");
+
+	}
 
 	return false;
 }
@@ -434,13 +361,13 @@ bool TyPMCGPass::doModulePass(Module *M) {
 						TypesFromModuleGVMap[GMM.first].end());
 			}
 		}
-#if 0
+
 		for (auto m : moPropMap)
 			for (auto m1 : m.second)
-				TYPM_LOG("@@ dependence " << m1->getName()
+				TYPM_DEBUG("@@ dependence " << m1->getName()
 					<< " ==> " << m.first.first->getName()
 					<< " HASH: " << m.first.second << "\n");
-#endif
+
 	}
 
 	//
@@ -478,7 +405,6 @@ bool TyPMCGPass::doModulePass(Module *M) {
 		if (AnalysisPhase >= 2) {
 
 			ResolvedDepModulesMap.clear();
-			bool Iter = true;
 			// Merge the propagation maps
 			moPropMapAll.insert(moPropMap.begin(), moPropMap.end());
 			// Add map one by one to avoid overwritting
@@ -513,6 +439,7 @@ bool TyPMCGPass::doModulePass(Module *M) {
 
 		++AnalysisPhase;
 		MIdx = 0;
+
 		if (AnalysisPhase <= MAX_PHASE_CG) {
 			TYPM_LOG("\n\n=== Move to phase " << AnalysisPhase << " ===\n\n");
 			return true;
@@ -522,44 +449,4 @@ bool TyPMCGPass::doModulePass(Module *M) {
 	}
 
 	return false;
-}
-
-void TyPMCGPass::processResults() {
-
-	// Load traces for evaluation
-	// Key: hash of SrcLn for caller
-	map<size_t, set<size_t>> hashedTraces;
-	map<size_t, SrcLn> hashSrcMap;
-	LoadTraces(hashedTraces, hashSrcMap);
-	size_t TraceCount = 0;
-	for (auto T : hashedTraces) {
-		TraceCount += T.second.size();
-	}
-	OP<<"@@ Trace size: "<<TraceCount<<"\n";
-
-
-	for (auto T : hashedTraces) {
-		if (calleesSrcMap.find(T.first) == calleesSrcMap.end())
-			continue;
-		for (auto calleehash : T.second) {
-			if (srcLnHashSet.find(calleehash) == srcLnHashSet.end())
-				continue;
-			if (addrTakenFuncHashSet.find(calleehash) == 
-					addrTakenFuncHashSet.end())
-				continue;
-			if (calleesSrcMap[T.first].count(calleehash)) {
-				// the callee is in the target set
-				SrcLn Caller = hashSrcMap[T.first];
-				OP<<"@ Found callee for: "<<Caller.Src<<" +"<<Caller.Ln<<"\n";
-			}
-			else if (L1CalleesSrcMap[T.first].count(calleehash)){
-				// false negative
-				OP<<"!! Cannot find callee\n";
-				SrcLn Caller = hashSrcMap[T.first];
-				SrcLn Callee = hashSrcMap[calleehash];
-				OP<<"@ Caller: "<<Caller.Src<<" +"<<Caller.Ln<<"\n";
-				OP<<"\t@ Callee: "<<Callee.Src<<" +"<<Callee.Ln<<"\n";
-			}
-		}
-	}
 }

@@ -28,7 +28,7 @@ class TyPMCGPass :
 
 
 	public:
-		static int AnalysisPhase;
+		int AnalysisPhase;
 
 		TyPMCGPass(GlobalContext *Ctx_)
 			: IterativeModulePass(Ctx_, "TyPCGPass"),
@@ -36,14 +36,13 @@ class TyPMCGPass :
 
 				LoadElementsStructNameMap(Ctx_->Modules);
 				MIdx = 0;
+				AnalysisPhase = 1;
 
 			}
 
 		virtual bool doInitialization(llvm::Module *);
 		virtual bool doFinalization(llvm::Module *);
 		virtual bool doModulePass(llvm::Module *);
-
-		void processResults();
 
 };
 

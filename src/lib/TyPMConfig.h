@@ -39,7 +39,7 @@ extern int MAX_PHASE_CG;
 #define FLOW_DIRECTION 1
 #define FUNCTION_AS_TARGET_TYPE 1 // Target types: struct type or function type
 #define MAP_DECLARATION_FUNCTION
-#define PRINT_ICALL_TARGET
+#define PRINT_ICALL_TARGET 0
 ///////////////////////////////////////////////////////////
 
 #define MAX_TYPE_LAYER 10
