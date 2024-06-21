@@ -431,7 +431,6 @@ size_t funcHash(const Function *F, bool withName) {
 		FunctionType *FTy = F->getFunctionType();
 		FTy->print(rso);
 		output = rso.str();
-		//output = funcTypeString(FTy);
 
 		if (withName)
 			output += F->getName();
@@ -440,26 +439,21 @@ size_t funcHash(const Function *F, bool withName) {
 #endif
 	// process string
 	// cleanString(output);
+	DBG << "[FHASH] " << str_hash(output) << "=" << output << ", from " << F->getName() << "\n";
 
 	return str_hash(output);
 }
 
 size_t callHash(const CallInst *CI) {
 
-	//Value *CO = CI->getCalledOperand();
-	//if (CO) {
-	//	Function *CF = dyn_cast<Function>(CO);
-	//	if (CF)
-	//		return funcHash(CF);
-	//}
 	hash<string> str_hash;
 	string sig;
 	raw_string_ostream rso(sig);
 	FunctionType *FTy = CI->getFunctionType();
 	FTy->print(rso);
 	string strip_str = rso.str();
-	//string strip_str = funcTypeString(FTy);
-	cleanString(strip_str);
+	// cleanString(strip_str);
+	DBG << "[CHASH] " << str_hash(strip_str) << "=" << strip_str << "\n";
 
 	return str_hash(strip_str);
 }
