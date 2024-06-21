@@ -85,12 +85,10 @@ bool TyPM::isContainerTy(Type *Ty) {
 void TyPM::addPropagation(const Module *ToM, const Module *FromM, Type *Ty,
 		bool isICall) {
 	size_t TyH = typeHash(Ty);
-#if 0	
 	if (Ty->isFunctionTy())
-		OP<<"@@ FuncType: "<<*Ty<<"; "<<"\n\t"
-			<<FromM->getName()<<" ==> "<<ToM->getName()
-			<<" HASH: "<<TyH<<"\n";
-#endif
+		TYPM_DEBUG("@@ FuncType: " << *Ty << "; " << "\n\t"
+			<< FromM->getName() << " ==> " << ToM->getName()
+			<<" HASH: " << TyH << "\n");
 	if (isICall)
 		moPropMapV[make_pair(ToM, TyH)].insert(FromM);
 	else
@@ -246,8 +244,7 @@ void TyPM::findTargetTypesInInitializer(const GlobalVariable * GV,
 	//if (!isa<ConstantAggregate>(Ini)) return;
 	TYPM_DEBUG("[GINIT]: " << GV->getName() << " in " << M->getName() << "\n");
 
-	if (ParsedGlobalTypesMap.find(GV)
-			!= ParsedGlobalTypesMap.end()) {
+	if (ParsedGlobalTypesMap.find(GV) != ParsedGlobalTypesMap.end()) {
 		TargetTypes = ParsedGlobalTypesMap[GV];
 		return;
 	}
@@ -311,8 +308,7 @@ void TyPM::findTargetTypesInInitializer(const GlobalVariable * GV,
 		}
 
 		// Go through each field/operand
-		for (auto oi = U->op_begin(), oe = U->op_end();
-				oi != oe; ++oi) {
+		for (auto oi = U->op_begin(), oe = U->op_end(); oi != oe; ++oi) {
 
 			const Value *O = *oi;
 			Type *OTy = O->getType();
@@ -375,6 +371,7 @@ void TyPM::findTargetTypesInInitializer(const GlobalVariable * GV,
 	ParsedGlobalTypesMap[GV] = TargetTypes;
 }
 
+
 // Collect types from reads and writes against a value
 bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 		typeset_t &WrittenTypes, const Module *M) {
@@ -383,7 +380,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 	return false;
 #endif
 
-	deque<const Value*>LV;
+	deque<const Value*> LV;
 	LV.push_back(V);
 	visited_t Visited;
 
@@ -400,7 +397,7 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 
 		for (auto I : CV->users()) {
 
-			Type *Ty = I->getType();
+			// Type *Ty = I->getType();
 
 			//
 			// Just continue the tracking for the following cases
@@ -414,8 +411,17 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 				// Cast Instruction into GV
 				LV.push_back(I);
 			}
-			else if (auto PIO = dyn_cast<PtrToIntOperator>(I)) {
+			else if (isa<PtrToIntOperator>(I)) {
 				LV.push_back(I);
+			}
+			else if (isa<SelectInst>(I)) {
+				LV.push_back(I);
+			}
+			else if (auto PHI = dyn_cast<PHINode>(I)) {
+				for (auto &iv : PHI->incoming_values()) {
+					if (iv.getUser() == I)
+						LV.push_back(I);
+				}
 			}
 
 			//
@@ -435,15 +441,24 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 				}
 				// The pointer is stored to else where, and we need to keep
 				// track of the new location
+				else if (isa<AllocaInst>(PO)) {
+					// handle local load/store
+					for (auto U : PO->users()) {
+						if (auto LI = dyn_cast<LoadInst>(U)) {
+							LV.push_back(LI);
+						}
+					}
+				}
 				else {
 					// Assume it is escaping?
+					TYPM_DEBUG("Value escaping? " << *VO
+						<< "stores to other location: " << *PO << "\n");
 					return false;
-
 				}
 			}
 			else if (auto LI = dyn_cast<LoadInst>(I)) {
 				Type *Ty = LI->getType();
-				if (PointerType *PTy = dyn_cast<PointerType>(LI->getType())) {
+				if (PointerType *PTy = dyn_cast<PointerType>(Ty)) {
 					Type *ETy = PTy->getPointerElementType();
 					if (isTargetTy(ETy)) {
 						ReadTypes.insert(ETy);
@@ -506,8 +521,8 @@ bool TyPM::parseUsesOfValue(const Value *V, typeset_t &ReadTypes,
 			//
 			// Other cases
 			//
-			else {
-				// ?
+			else if (!isa<ICmpInst>(I) && !isa<ReturnInst>(I)) {
+				WARNING("Unhandled user case: " << *I << "\n");
 			}
 		}
 	}
@@ -595,7 +610,7 @@ void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 			}
 
 			Type *Ty = LI->getType();
-			if (PointerType *PTy = dyn_cast<PointerType>(LI->getType())) {
+			if (PointerType *PTy = dyn_cast<PointerType>(Ty)) {
 
 				Type *ETy = PTy->getPointerElementType();
 				if (isTargetTy(ETy)) {
@@ -656,10 +671,9 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 	const Module *CallerM = CI->getModule();
 	const Module *CalleeM = CF->getParent();
 
-#if 0
-	OP<<"@@ Cross-module call: "<<*CI<<"; "<<CF->getName()<<"\n\t"
-		<<CallerM->getName()<<" ==> "<<CalleeM->getName()<<"\n";
-#endif
+	TYPM_DEBUG("@@ Cross-module call: " << *CI << "; "
+		<< CF->getName() << "\n\t" << CallerM->getName()
+		<< " ==> " << CalleeM->getName() << "\n");
 
 	auto MP = make_pair(CallerM, CalleeM);
 	for (auto AI = CF->arg_begin(), E = CF->arg_end(); AI != E; ++AI) {
@@ -669,7 +683,7 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 		// Can the arg pass a function pointer? If so which
 		// type?
 		Type *ATy = Arg->getType();
-		size_t HTy = typeHash(ATy);
+		// size_t HTy = typeHash(ATy);
 
 		// The arg itself is a target type
 		if (isTargetTy(ATy)) {
@@ -832,6 +846,7 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 	}
 }
 
+
 void TyPM::findTargetTypesInValue(const Value *V, typeset_t &TargetTypes,
 		const Module *M) {
 
@@ -902,9 +917,9 @@ void TyPM::findTargetTypesInValue(const Value *V, typeset_t &TargetTypes,
 	}
 
 	ParsedTypeMap[make_pair(M, VTy)] = TargetTypes;
-	//for (auto FTy : TargetTypes) {
-	//	OP<<*FTy<<"\n";
-	//}
+	for (auto FTy : TargetTypes) {
+		TYPM_DEBUG("[TTIV] " << *FTy << "\n");
+	}
 }
 
 
@@ -924,9 +939,9 @@ void TyPM::mapDeclToActualFuncs(FuncSet &FS) {
 		}
 		if (F->isDeclaration()) {
 			FS.erase(F);
-			F = Ctx->Funcs[F->getGUID()];
-			if (F) {
-				FS.insert(F);
+			auto itr = Ctx->Funcs.find(F->getGUID());
+			if (itr != Ctx->Funcs.end()) {
+				FS.insert(itr->second);
 			}
 		}
 		else
@@ -1046,8 +1061,9 @@ void TyPM::getDependentModulesV(const Value* TV, const Module *M,
 	Type *TTy = Ty;
 	if (Outermost.first) {
 		TTy = Outermost.first;
-		OP<<"@@ Elevated type: "<<*(Ty)<<" ==> "<<*(TTy)<<"\n";
-		OP<<"@@ Field index: "<<Outermost.second<<"\n";
+		TYPM_DEBUG("@@ Elevated type: " << *(Ty) << " ==> "
+			<< *(TTy) << "\n");
+		TYPM_DEBUG("\tField index: " << Outermost.second <<"\n");
 		while (TTy->isPointerTy())
 			TTy = TTy->getPointerElementType();
 	}
@@ -1068,7 +1084,7 @@ void TyPM::getDependentModulesV(const Value* TV, const Module *M,
 		if (storedTypeIdxMap[M].find(TTy) == storedTypeIdxMap[M].end()) {
 			modset_t &MSet = TargetDataAllocModules[typeHash(TTy)];
 			if (MSet.find(M) == MSet.end()) {
-				OP<<"!!! NO DEPENDENCE: "<<*TTy<<"\n";
+				TYPM_LOG("!!! NO DEPENDENCE: " << *TTy << "\n");
 				printSourceCodeInfo(TV, "TYPE-ERR");
 			}
 		}
@@ -1121,13 +1137,13 @@ bool TyPM::resolveFunctionTargets() {
 		oldModuleCount += Ctx->Modules.size();
 		auto CallerM = CI->getModule();
 		// CallBase *CB = dyn_cast<CallBase>(CI);
-		Type *FuncType = CI->getFunctionType();
+		// Type *FuncType = CI->getFunctionType();
 		modset_t MSet;
 		getDependentModulesV(CI->getCalledOperand(), CallerM, MSet);
 		MSet.insert(CallerM);
 		newModuleCount += MSet.size();
 
-#ifdef PRINT_ICALL_TARGET
+#if PRINT_ICALL_TARGET
 		printSourceCodeInfo(CI, "RESOLVING");
 #endif
 		for (auto Callee : Ctx->Callees[CI]) {
@@ -1145,7 +1161,7 @@ bool TyPM::resolveFunctionTargets() {
 				   ) {
 
 					Ctx->Callees[CI].erase(Callee);
-#ifdef PRINT_ICALL_TARGET
+#if PRINT_ICALL_TARGET
 					printSourceCodeInfo(Callee, "REMOVED");
 #endif
 				}
@@ -1155,7 +1171,7 @@ bool TyPM::resolveFunctionTargets() {
 			}
 		}
 		mapDeclToActualFuncs(Ctx->Callees[CI]);
-#ifdef PRINT_ICALL_TARGET
+#if PRINT_ICALL_TARGET
 		printTargets(Ctx->Callees[CI], CI);
 #endif
 	}
