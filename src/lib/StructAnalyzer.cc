@@ -180,7 +180,7 @@ void StructAnalyzer::run(Module* M, const DataLayout* layout)
       // process new struct only
       if (structMap.insert(std::make_pair(getScopeName(st, M), st)).second) {
         auto &stInfo = addStructInfo(st, M, layout);
-        SA_LOG("Map struct " << getScopeName(st, M) << " to " << &stInfo << "\n");
+        SA_DEBUG("Map struct " << getScopeName(st, M) << " to " << &stInfo << "\n");
       }
     }
   }
