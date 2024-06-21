@@ -208,7 +208,7 @@ void MLTA::unrollLoops(Function *F) {
 		// Get the header,latch block, exiting block of every loop
 		BasicBlock *HeaderB = LP->getHeader();
 
-		unsigned NumBE = LP->getNumBackEdges();
+		// unsigned NumBE = LP->getNumBackEdges();
 		SmallVector<BasicBlock *, 4> LatchBS;
 
 		LP->getLoopLatches(LatchBS);
@@ -478,8 +478,8 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 			// field of another composite-type object
 			else if (isCompositeType(OTy)) {
 				// confine composite types
-				Type *ITy = U->getType();
-				int ONo = oi->getOperandNo();
+				// Type *ITy = U->getType();
+				// int ONo = oi->getOperandNo();
 
 				// recognize nested composite types
 				auto OU = dyn_cast<User>(O);
@@ -1106,6 +1106,7 @@ bool MLTA::getGEPLayerTypes(const GEPOperator *GEP, typelist_t &TyList) {
 #endif
 				}
 			}
+			(void)OptGEP;
 		}
 		else {
 			auto I = dyn_cast<Instruction>(PO);
@@ -1510,6 +1511,8 @@ bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 						break;
 					}
 				}
+#else
+				(void)PrevIdx;
 #endif
 
 				getTargetsWithLayerType(typeHash(TyIdx.first), TyIdx.second, FS1);
