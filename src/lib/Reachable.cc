@@ -132,7 +132,7 @@ bool ReachableCallGraphPass::isCompatibleType(Type *T1, Type *T2) {
   } else if (T1->getTypeID() <= Type::FP128TyID) {
     return T1->getTypeID() == T2->getTypeID();
   } else {
-    errs() << "Unhandled Types:" << *T1 << " :: " << *T2 << "\n";
+    WARNING("Unhandled Types:" << *T1 << " :: " << *T2 << "\n");
     return T1->getTypeID() == T2->getTypeID();
   }
 }
@@ -192,25 +192,27 @@ bool ReachableCallGraphPass::runOnFunction(Function *F) {
   RA_LOG("### Run on function: " << F->getName() << "\n");
   for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
     Instruction *I = &*i;
-    
-    if (CallInst *CI = dyn_cast<CallInst>(I)) {
-      if (Function *CF = CI->getCalledFunction()) {
-        // direct call
-        auto RCF = getFuncDef(CF);
-        Changed |= Ctx->Callees[CI].insert(RCF).second;
-        Changed |= Ctx->Callers[RCF].insert(CI).second;
-        // check for call to exit functions
-        if (isExitFn(RCF->getName())) {
-          RA_LOG("Exit Call: " << *CI << "\n");
-          exitBBs.insert(CI->getParent());
-        }
-      } else {
-        // indirect call
-        auto &FS = calleeByType[CI];
-        Changed |= findCalleesByType(CI, FS);
-        for (auto F : FS) {
-          RA_DEBUG("Adding indirect caller for " << F->getName() << "@" << F << "\n");
-          Changed |= callerByType[F].insert(CI).second;
+
+    if (UseTypeBasedCallGraph) {
+      if (CallInst *CI = dyn_cast<CallInst>(I)) {
+        if (Function *CF = CI->getCalledFunction()) {
+          // direct call
+          auto RCF = getFuncDef(CF);
+          Changed |= Ctx->Callees[CI].insert(RCF).second;
+          Changed |= Ctx->Callers[RCF].insert(CI).second;
+          // check for call to exit functions
+          if (isExitFn(RCF->getName())) {
+            RA_LOG("Exit Call: " << *CI << "\n");
+            exitBBs.insert(CI->getParent());
+          }
+        } else {
+          // indirect call
+          auto &FS = calleeByType[CI];
+          Changed |= findCalleesByType(CI, FS);
+          for (auto F : FS) {
+            RA_DEBUG("Adding indirect caller for " << F->getName() << "@" << F << "\n");
+            Changed |= callerByType[F].insert(CI).second;
+          }
         }
       }
     }
@@ -228,22 +230,24 @@ bool ReachableCallGraphPass::runOnFunction(Function *F) {
       }
     }
   }
-  
+
   return Changed;
 }
 
 bool ReachableCallGraphPass::doInitialization(Module *M) {
 
   for (Function &F : *M) {
-    // collect address-taken functions
-    if (F.hasAddressTaken()) {
-      RA_LOG("AddressTaken: " << F.getName() << "\n");
-      // hmmm, turns out F can be declaration
-      auto RF = getFuncDef(&F);
-      if (F.getFunctionType()->isVarArg()) {
-        RA_DEBUG("  VarArg: " << F.getName() << "\n");
-      } else {
-        Ctx->AddressTakenFuncs.insert(RF);
+    if (UseTypeBasedCallGraph) {
+      // collect address-taken functions
+      if (F.hasAddressTaken()) {
+        RA_LOG("AddressTaken: " << F.getName() << "\n");
+        // hmmm, turns out F can be declaration
+        auto RF = getFuncDef(&F);
+        if (F.getFunctionType()->isVarArg()) {
+          RA_DEBUG("  VarArg: " << F.getName() << "\n");
+        } else {
+          Ctx->AddressTakenFuncs.insert(RF);
+        }
       }
     }
 
@@ -265,7 +269,8 @@ bool ReachableCallGraphPass::doFinalization(Module *M) {
   return false;
 }
 
-void ReachableCallGraphPass::collectReachable(std::deque<const BasicBlock*> &worklist, std::unordered_set<const BasicBlock*> &reachable) {
+void ReachableCallGraphPass::collectReachable(std::deque<const BasicBlock*> &worklist,
+    std::unordered_set<const BasicBlock*> &reachable) {
   while (!worklist.empty()) {
     auto *BB = worklist.front();
     worklist.pop_front();
@@ -279,26 +284,25 @@ void ReachableCallGraphPass::collectReachable(std::deque<const BasicBlock*> &wor
     auto *F = BB->getParent();
     if (BB == &F->getEntryBlock()) {
       auto itr = Ctx->Callers.find(F);
-      if (itr != Ctx->Callers.end()) {
-        RA_DEBUG("Direct call can reach: " << F->getName() << "\n");
-        for (auto CI : itr->second) {
-          auto CBB = CI->getParent();
-          if (reachable.insert(CBB).second) {
-            worklist.push_back(CBB);
-          }
+      if (itr == Ctx->Callers.end()) {
+        bool found = false;
+        if (UseTypeBasedCallGraph) {
+          itr = callerByType.find(F);
+          found = (itr != callerByType.end());
         }
-      } else {
-        itr = callerByType.find(F);
-        if (itr != callerByType.end()) {
-          RA_DEBUG("Indirect call can reach: " << F->getName() << "\n");
-          for (auto CI : itr->second) {
-            auto CBB = CI->getParent();
-            if (reachable.insert(CBB).second) {
-              worklist.push_back(CBB);
-            }
+        if (!found) {
+          if (!F->getName().equals("main")) {
+            WARNING("No caller for " << F->getName() << "\n");
           }
-        } else if (!F->getName().equals("main")) {
-          WARNING("No caller for " << F->getName() << "\n");
+          continue;
+        }
+      }
+
+      RA_DEBUG(F->getName() << " is reachable\n");
+      for (auto CI : itr->second) {
+        auto CBB = CI->getParent();
+        if (reachable.insert(CBB).second) {
+          worklist.push_back(CBB);
         }
       }
     }
@@ -330,6 +334,18 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
   for (const auto &kv : distances)
     worklist.push_back(kv.first);
   collectReachable(worklist, reachableBBs);
+
+  // check if target is reachable
+  bool reached = false;
+  for (auto &entry : entryBBs) {
+    if (reachableBBs.find(entry) != reachableBBs.end()) {
+      RA_LOG("Target is reachable from entry\n");
+      reached = true;
+    }
+  }
+
+  if (!reached)
+    return;
 
   // now calculate distances in a bottom-up manner
   for (const auto &kv : distances)
@@ -368,52 +384,59 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
     auto *F = BB->getParent();
     if (BB == &F->getEntryBlock()) {
       auto itr = Ctx->Callers.find(F);
-      if (itr != Ctx->Callers.end()) {
-        RA_LOG("Direct call can reach target: " << F->getName() << "\n");
-        // for direct calls, prob can be propagated directly
-        auto dist = distances[BB];
-        for (auto CI : itr->second) {
-          auto CBB = CI->getParent();
+      if (itr == Ctx->Callers.end()) {
+        bool found = false;
+        if (UseTypeBasedCallGraph) {
+          itr = callerByType.find(F);
+          found = (itr != callerByType.end());
+        }
+        if (!found) {
+          if (!F->getName().equals("main")) {
+            WARNING("No caller for " << F->getName() << "\n");
+          } else {
+            RA_LOG("main is reached\n");
+          }
+          continue;
+        }
+      }
+
+      RA_LOG(F->getName() << " is reachable\n");
+      auto dist = distances[BB];
+      for (auto CI : itr->second) {
+        auto CBB = CI->getParent();
+        if (!CI->isIndirectCall()) {
+          // for direct calls, prob can be propagated directly
           auto itr2 = distances.find(CBB);
           if (itr2 == distances.end() || itr2->second != dist) {
-            RA_DEBUG("Adding caller: " << CI->getFunction()->getName() << "\n");
+            RA_DEBUG("Adding direct caller: " << CI->getFunction()->getName() << "\n");
             distances[CBB] = dist;
             worklist.push_back(CBB);
           }
-        }
-      } else {
-        // indirect call is tricky, treat like predecessors
-        itr = callerByType.find(F);
-        if (itr != callerByType.end()) {
-          RA_LOG("Indirect call can reach target: " << F->getName() << "\n");
-          for (auto CI : itr->second) {
-            auto CBB = CI->getParent();
-            auto old = distances[CBB];
-            // for each call site, check if all its callees have been processed
-            int numCallees = 0;
-            double prob = 0.0;
-            for (auto F : calleeByType[CI]) {
-              numCallees++;
-              auto CEBB = const_cast<BasicBlock*>(&F->getEntryBlock());
-              if (reachableBBs.find(CEBB) == reachableBBs.end()) {
-                continue;
-              }
-              auto itr2 = distances.find(CEBB);
-              if (itr2 != distances.end()) {
-                prob += 1.0 / std::pow(2, itr2->second);
-              }
+        } else {
+          // indirect call is tricky, treat like predecessors
+          auto old = distances[CBB];
+          // for each call site, check if all its callees have been processed
+          int numCallees = 0;
+          double prob = 0.0;
+          for (auto F : calleeByType[CI]) {
+            numCallees++;
+            auto CEBB = const_cast<BasicBlock*>(&F->getEntryBlock());
+            if (reachableBBs.find(CEBB) == reachableBBs.end()) {
+              continue;
             }
-            // for indirect call, prob needs to be divided by the number of potential callees
-            prob /= numCallees;
-            auto dist = (-std::log2(prob));
-            if (old != dist) {
-              RA_DEBUG("Adding indirect caller: " << CI->getFunction()->getName() << "\n");
-              distances[CBB] = dist;
-              worklist.push_back(CBB);
+            auto itr2 = distances.find(CEBB);
+            if (itr2 != distances.end()) {
+              prob += 1.0 / std::pow(2, itr2->second);
             }
           }
-        } else if (!F->getName().equals("main")) {
-          WARNING("No caller for " << F->getName() << "@" << F << "\n");
+          // for indirect call, prob needs to be divided by the number of potential callees
+          prob /= numCallees;
+          auto dist = (-std::log2(prob));
+          if (old != dist) {
+            RA_DEBUG("Adding indirect caller: " << CI->getFunction()->getName() << "\n");
+            distances[CBB] = dist;
+            worklist.push_back(CBB);
+          }
         }
       }
     }
@@ -424,8 +447,9 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
   }
 }
 
-ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList)
-  : Ctx(Ctx_) {
+ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_,
+  std::string TargetList, bool typeBased)
+  : Ctx(Ctx_), UseTypeBasedCallGraph(typeBased) {
   // parse target list
   if (!TargetList.empty()) {
     std::ifstream ifs(TargetList);

@@ -31,6 +31,7 @@
 #include "Global.h"
 #include "Pass.h"
 #include "PointTo.h"
+#include "TyPMPass.h"
 #include "Reachable.h"
 
 using namespace llvm;
@@ -57,14 +58,14 @@ GlobalContext GlobalCtx;
 void IterativeModulePass::run(ModuleList &modules) {
 
   ModuleList::iterator i, e;
-  Diag << "[" << ID << "] Initializing " << modules.size() << " modules ";
+  Diag << "[" << ID << "] Initializing " << modules.size() << " modules\n";
   bool again = true;
   Iteration = 0;
   while (again) {
     again = false;
     for (i = modules.begin(), e = modules.end(); i != e; ++i) {
       again |= doInitialization(i->first);
-      Diag << ".";
+      // Diag << ".";
     }
     Iteration++;
   }
@@ -110,14 +111,17 @@ void doBasicInitialization(Module *M) {
 
   // collect global object definitions
   for (GlobalVariable &GV : M->globals()) {
+    auto GVID = GV.getGUID();
     if (GV.hasExternalLinkage()) {
-      auto GVID = GV.getGUID();
       if (!GV.isDeclaration()) {
         assert(GlobalCtx.Gobjs.count(GVID) == 0);
+        assert(GV.hasInitializer());
         GlobalCtx.Gobjs[GVID] = &GV;
       } else {
         GlobalCtx.ExtGobjs[GVID] = &GV;
       }
+    } else if (GV.hasInitializer()) {
+      GlobalCtx.Gobjs[GVID] = &GV;
     }
   }
 
@@ -188,7 +192,10 @@ int main(int argc, char **argv) {
   for (auto &[id, f] : GlobalCtx.Funcs) { GlobalCtx.ExtFuncs.erase(id); }
 
   // Main workflow
-  ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList);
+  TyPMCGPass TyCG(&GlobalCtx);
+  TyCG.run(GlobalCtx.Modules);
+
+  ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList, false);
   RCGPass.run(GlobalCtx.Modules);
   RCGPass.dumpDistance(outs());
 

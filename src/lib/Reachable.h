@@ -21,6 +21,8 @@ private:
   CalleeMap calleeByType;
   CallerMap callerByType;
 
+  const bool UseTypeBasedCallGraph;
+
   std::vector<std::pair<std::string, int> > targetList;
   std::unordered_set<const llvm::BasicBlock*> reachableBBs;
   std::unordered_map<const llvm::BasicBlock*, double> distances;
@@ -28,7 +30,7 @@ private:
   std::unordered_set<const llvm::BasicBlock*> entryBBs;
 
 public:
-    ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList);
+    ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList, bool typeBased = true);
     virtual bool doInitialization(llvm::Module *);
     virtual bool doFinalization(llvm::Module *);
     virtual void run(ModuleList &modules);
