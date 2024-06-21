@@ -59,7 +59,7 @@ class MLTA {
 		unordered_map<size_t, set<size_t>> L1CalleesSrcMap;
 
 		// Matched icall types -- to avoid repeatation
-		DenseMap<size_t, FuncSet> MatchedICallTypeMap;
+		// DenseMap<size_t, FuncSet> MatchedICallTypeMap;
 
 		// Set of target types
 		unordered_set<size_t> TTySet;
@@ -134,6 +134,7 @@ class MLTA {
 		const Value *recoverBaseType(const Value *V);
 		Type *getRealType(const Value *V);
 		const BasicBlock* getParentBlock(const Value* V);
+		const Function* getFuncDef(const Function* F);
 
 		void unrollLoops(Function *F);
 		void saveCalleesInfo(const CallInst *CI, FuncSet &FS, bool mlta);

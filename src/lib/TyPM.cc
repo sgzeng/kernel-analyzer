@@ -98,21 +98,19 @@ void TyPM::addPropagation(const Module *ToM, const Module *FromM, Type *Ty,
 }
 
 void TyPM::addModuleToGVType(Type *Ty, const Module *M, const GlobalVariable *GV) {
-#if 0
-	OP<<"@@ Store to GV: "<<GV->getName()<<"\n\t";
-	OP<<"@@ Add: "<<*Ty<<"\n\t"
-		<<" <== "<<M->getName()<<" HASH: "<<typeHash(Ty)<<"\n";
-#endif
+	TYPM_DEBUG("@@ Store to GV: " << GV->getName()
+		<< ", Add: " << *Ty
+		<< ", <== " << M->getName()
+		<< ", HASH: " << typeHash(Ty) << "\n");
 	TypesFromModuleGVMap[make_pair(GV->getGUID(), typeHash(Ty))].insert(M);
 }
 
 
 void TyPM::addGVToModuleType(Type *Ty, const GlobalVariable *GV, const Module *M) {
-#if 0
-	OP<<"@@ Load from GV: "<<GV->getName()<<"\n\t";
-	OP<<"@@ Add: "<<*Ty<<"\n\t"
-		<<" ==> "<<M->getName()<<" HASH: "<<typeHash(Ty)<<"\n";
-#endif
+	TYPM_DEBUG("@@ Load from GV: " << GV->getName()
+		<< ", Add: " << *Ty
+		<< ", ==> " << M->getName()
+		<< ", HASH: " <<typeHash(Ty) << "\n");
 	TypesToModuleGVMap[make_pair(GV->getGUID(), typeHash(Ty))].insert(M);
 }
 
@@ -246,6 +244,7 @@ void TyPM::findTargetTypesInInitializer(const GlobalVariable * GV,
 	// The global can be a pointer to another global; in this case, we
 	// still need to look into it, so comment out the following line
 	//if (!isa<ConstantAggregate>(Ini)) return;
+	TYPM_DEBUG("[GINIT]: " << GV->getName() << " in " << M->getName() << "\n");
 
 	if (ParsedGlobalTypesMap.find(GV)
 			!= ParsedGlobalTypesMap.end()) {
@@ -589,8 +588,9 @@ void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 					addGVToModuleType(ETy, GV, M);
 				}
 #ifdef TYPE_ELEVATION
-				else if (isContainerTy(ETy))
+				else if (isContainerTy(ETy)) {
 					addGVToModuleType(ETy, GV, M);
+				}
 #endif
 			}
 
@@ -682,10 +682,9 @@ void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
 				// First handle implicit flows where functions are
 				// used as function arguments
 				auto CI_Arg = CI->getArgOperand(AI - CF->arg_begin());
-				if (auto AF = dyn_cast<Function>(CI_Arg)) {
-					if (AF->isDeclaration())
-						AF = Ctx->Funcs[AF->getGUID()];
-					if (AF) {
+				if (const Function *AF = dyn_cast<Function>(CI_Arg)) {
+					AF = getFuncDef(AF);
+					if (!AF->isDeclaration()) {
 						addPropagation(CallerM, AF->getParent(),
 								ETy, CI->isIndirectCall());
 					}

@@ -36,6 +36,7 @@
 #include "TyPMPass.h"
 
 #define TYPM_LOG(stmt) KA_LOG(2, "TyPM: " << stmt)
+#define TYPM_DEBUG(stmt) KA_LOG(3, "TyPM: " << stmt)
 
 using namespace llvm;
 
@@ -128,16 +129,18 @@ void TyPMCGPass::PhaseMLTA(Function *F) {
 	unrollLoops(F);
 #endif
 
+	TYPM_LOG("PhaseMLTA: " << F->getName() << "\n");
+
 	// Collect callers and callees
 	for (auto i = inst_begin(F), e = inst_end(F); i != e; ++i) {
 		// Map callsite to possible callees.
 		if (CallInst *CI = dyn_cast<CallInst>(&*i)) {
 
-			CallSet.insert(CI);
+			CallSet.push_back(CI);
 
 			FuncSet &FS = MLTA::Ctx->Callees[CI];
-			Value *CV = CI->getCalledOperand();
-			Function *CF = dyn_cast<Function>(CV);
+			const Value *CV = CI->getCalledOperand();
+			const Function *CF = dyn_cast<Function>(CV);
 
 			// Indirect call
 			if (CI->isIndirectCall()) {
@@ -146,15 +149,16 @@ void TyPMCGPass::PhaseMLTA(Function *F) {
 				findCalleesWithMLTA(CI, FS);
 
 				for (auto Callee : FS) {
+					TYPM_DEBUG("Found ICALLEE: " << Callee->getName() << "\n");
 					MLTA::Ctx->Callers[Callee].insert(CI);
 				}
 
 				// Save called values for future uses.
 				MLTA::Ctx->IndirectCallInsts.push_back(CI);
 
-				ICallSet.insert(CI);
+				ICallSet.push_back(CI);
 				if (!FS.empty()) {
-					MatchedICallSet.insert(CI);
+					MatchedICallSet.push_back(CI);
 					NumIndirectCallTargets += FS.size();
 					NumValidIndirectCalls++;
 				}
@@ -168,8 +172,7 @@ void TyPMCGPass::PhaseMLTA(Function *F) {
 						//StringRef FName = CF->getName();
 						//if (FName.startswith("SyS_"))
 						//	FName = StringRef("sys_" + FName.str().substr(4));
-						if (Function *GF = MLTA::Ctx->Funcs[CF->getGUID()])
-							CF = GF;
+						CF = getFuncDef(CF);
 					}
 
 					FS.insert(CF);
@@ -185,6 +188,8 @@ void TyPMCGPass::PhaseMLTA(Function *F) {
 }
 
 void TyPMCGPass::PhaseTyPM(Function *F) {
+
+	TYPM_LOG("PhaseTyPM: " << F->getName() << "\n");
 
 	for (auto i = inst_begin(F), e = inst_end(F); i != e; ++i) {
 
@@ -206,9 +211,8 @@ void TyPMCGPass::PhaseTyPM(Function *F) {
 
 			for (auto CF : MLTA::Ctx->Callees[CI]) {
 				// Need to use the actual function with body here
-				if (CF->isDeclaration())
-					CF = MLTA::Ctx->Funcs[CF->getGUID()];
-				if (!CF) {
+				CF = getFuncDef(CF);
+				if (CF->isDeclaration()) {
 					continue;
 				}
 				if (CF->doesNotAccessMemory())
@@ -227,19 +231,17 @@ void TyPMCGPass::PhaseTyPM(Function *F) {
 				continue;
 			}
 
-			Function *CF = dyn_cast<Function>(CO);
+			const Function *CF = dyn_cast<Function>(CO);
 			if (!CF || CF->isIntrinsic()) {
 				// Likely it is ASM code
 				continue;
 			}
+			CF = getFuncDef(CF);
 			// Need to use the actual function with body here
 			if (CF->isDeclaration()) {
-				CF = MLTA::Ctx->Funcs[CF->getGUID()];
-				if (!CF) {
-					// Have to skip it as the function body is not in
-					// the analysis scope
-					continue;
-				}
+				// Have to skip it as the function body is not in
+				// the analysis scope
+				continue;
 			}
 			if (CF->doesNotAccessMemory())
 				continue;
@@ -297,10 +299,7 @@ bool TyPMCGPass::doInitialization(Module *M) {
 		// Collect address-taken functions.
 		// NOTE: declaration functions can also have address taken
 		if (F.hasAddressTaken()) {
-			auto RF = &F;
-			auto itr = MLTA::Ctx->Funcs.find(F.getGUID());
-			if (itr != MLTA::Ctx->Funcs.end())
-				RF = itr->second;
+			auto RF = getFuncDef(&F);
 			MLTA::Ctx->AddressTakenFuncs.insert(RF);
 			size_t FuncHash = funcHash(&F, false);
 			MLTA::Ctx->FuncSigs[FuncHash].insert(RF);
@@ -342,6 +341,10 @@ bool TyPMCGPass::doInitialization(Module *M) {
 		findTargetAllocInFunction(&F);
 	}
 
+	if (MIdx == MLTA::Ctx->Modules.size()) {
+		MIdx = 0;
+	}
+
 	return false;
 }
 
@@ -361,12 +364,24 @@ bool TyPMCGPass::doFinalization(Module *M) {
 			}
 		}
 	}
+
+	TYPM_LOG("############## Result Statistics ##############\n");
+	TYPM_LOG("# Number of indirect calls: \t\t\t" << MLTA::Ctx->IndirectCallInsts.size() << "\n");
+	TYPM_LOG("# Number of indirect calls with targets: \t" << NumValidIndirectCalls << "\n");
+	TYPM_LOG("# Number of indirect-call targets: \t\t" << NumIndirectCallTargets << "\n");
+	TYPM_LOG("# Number of address-taken functions: \t\t" << MLTA::Ctx->AddressTakenFuncs.size() << "\n");
+	TYPM_LOG("# Number of second layer calls: \t\t" << NumSecondLayerTypeCalls << "\n");
+	TYPM_LOG("# Number of second layer targets: \t\t" << NumSecondLayerTargets << "\n");
+	TYPM_LOG("# Number of first layer calls: \t\t\t" << NumFirstLayerTypeCalls << "\n");
+	TYPM_LOG("# Number of first layer targets: \t\t" << NumFirstLayerTargets << "\n");
+
 	return false;
 }
 
 bool TyPMCGPass::doModulePass(Module *M) {
 
 	++ MIdx;
+	TYPM_LOG("Module [" << MIdx << "/" << MLTA::Ctx->Modules.size() << "]\n");
 
 	//
 	// Iterate and process globals
@@ -400,7 +415,7 @@ bool TyPMCGPass::doModulePass(Module *M) {
 
 				// TODO: can be optimized for better precision: either from
 				// or to
-				size_t TyH;
+				size_t TyH = typeHash(Ty);
 				TypesFromModuleGVMap[make_pair(GV->getGUID(), TyH)].insert(M);
 				TypesToModuleGVMap[make_pair(GV->getGUID(), TyH)].insert(M);
 			}
@@ -431,10 +446,9 @@ bool TyPMCGPass::doModulePass(Module *M) {
 	//
 	// Process functions
 	//
-	for (Module::iterator f = M->begin(), fe = M->end();
-			f != fe; ++f) {
+	for (auto f = M->begin(), fe = M->end(); f != fe; ++f) {
 
-		Function *F = &*f;
+		auto F = &*f;
 
 		if (F->isDeclaration() || F->isIntrinsic())
 			continue;
@@ -500,8 +514,10 @@ bool TyPMCGPass::doModulePass(Module *M) {
 		++AnalysisPhase;
 		MIdx = 0;
 		if (AnalysisPhase <= MAX_PHASE_CG) {
-			OP<<"\n\n=== Move to phase "<<AnalysisPhase<<" ===\n\n";
+			TYPM_LOG("\n\n=== Move to phase " << AnalysisPhase << " ===\n\n");
 			return true;
+		} else {
+			TYPM_LOG("\n=== Done " << MAX_PHASE_CG << "===\n");
 		}
 	}
 

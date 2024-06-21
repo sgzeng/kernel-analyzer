@@ -51,6 +51,14 @@ inline MLTA::hashidx_t MLTA::hashidx_c(size_t Hash, int Idx) {
 	return make_pair(Hash, Idx);
 }
 
+const Function* MLTA::getFuncDef(const Function *F) {
+	auto itr = Ctx->Funcs.find(F->getGUID());
+	if (itr != Ctx->Funcs.end() && itr->second != nullptr)
+		return itr->second;
+	else
+		return F;
+}
+
 bool MLTA::fuzzyTypeMatch(Type *Ty1, Type *Ty2,
 		const Module *M1, const Module *M2) {
 
@@ -99,10 +107,10 @@ void MLTA::findCalleesWithType(const CallInst *CI, FuncSet &S) {
 	// Performance improvement: cache results for types
 	//
 	size_t CIH = callHash(CI);
-	if (MatchedFuncsMap.find(CIH) != MatchedFuncsMap.end()) {
-		if (!MatchedFuncsMap[CIH].empty())
-			S.insert(MatchedFuncsMap[CIH].begin(),
-					MatchedFuncsMap[CIH].end());
+	auto itr = MatchedFuncsMap.find(CIH);
+	if (itr != MatchedFuncsMap.end()) {
+		if (!itr->second.empty())
+			S.insert(itr->second.begin(), itr->second.end());
 		return;
 	}
 
@@ -417,7 +425,6 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 	if (!isa<ConstantAggregate>(Ini))
 		return false;
 
-	// deque<pair<Type*, int>> NestedInit;
 	using field_t = unordered_set<int>;
 	unordered_map<const Value*, unordered_map<const Value*, field_t>> ContainersMap;
 	unordered_set<const Value*> FuncOperands;
@@ -531,6 +538,7 @@ bool MLTA::typeConfineInInitializer(const GlobalVariable *GV) {
 
 			// Found a function
 			if (FoundF && !FoundF->isIntrinsic()) {
+				FoundF = getFuncDef(FoundF);
 
 				// "llvm.compiler.used" indicates that the linker may touch
 				// it, so do not apply MLTA against them
@@ -616,12 +624,11 @@ bool MLTA::typeConfineInFunction(const Function *F) {
 						continue;
 					}
 					auto CV = CI->getCalledOperand();
-					auto CF = dyn_cast<Function>(CV);
+					const Function *CF = dyn_cast<Function>(CV);
 					if (!CF)
 						continue;
+					CF = getFuncDef(CF);
 					if (CF->isDeclaration())
-						CF = Ctx->Funcs[CF->getGUID()];
-					if (!CF)
 						continue;
 					if (auto *Arg = getParamByArgNo(CF, OI->getOperandNo())) {
 						for (auto U : Arg->users()) {
@@ -806,6 +813,7 @@ void MLTA::confineTargetFunction(const Value *V, const Function *F) {
 	if (F->isIntrinsic())
 		return;
 
+	F = getFuncDef(F);
 	StoredFuncs.insert(F);
 
 	typelist_t TyChain;
@@ -1398,20 +1406,33 @@ bool MLTA::getTargetsWithLayerType(size_t TyHash, int Idx,
 bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 		FuncSet &FS) {
 
+	size_t CallHash = callHash(CI);
+	MLTA_DEBUG("[CALLEE-MLTA] " << *CI << ", HASH = " << CallHash << "\n");
+
+	auto itr = Ctx->FuncSigs.find(CallHash);
+	if (itr == Ctx->FuncSigs.end()) {
+		return false;
+	}
+
 	// Initial set: first-layer results
 	// TODO: handling virtual functions
-	FS = Ctx->FuncSigs[callHash(CI)];
+	FS = itr->second;
 
 	if (FS.empty()) {
 		// No need to go through MLTA if the first layer is empty
 		return false;
 	}
 
+	MLTA_DEBUG("[FIRST-LAYER] " << FS.size() << "\n");
+	for (auto F : FS) {
+		MLTA_DEBUG("\t" << F->getName() << "\n");
+	}
+
 	NumFirstLayerTargets += FS.size();
 	NumFirstLayerTypeCalls += 1;
 
 	FuncSet FS1, FS2;
-	Type *PrevLayerTy = (dyn_cast<CallBase>(CI))->getFunctionType();
+	Type *PrevLayerTy = CI->getFunctionType();
 	int PrevIdx = -1;
 	const Value *CV = CI->getCalledOperand();
 	const Value *NextV = NULL;
@@ -1492,6 +1513,10 @@ bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 #endif
 
 				getTargetsWithLayerType(typeHash(TyIdx.first), TyIdx.second, FS1);
+				MLTA_DEBUG("[TARGETS] with layer type " << FS1.size() << "\n");
+				for (auto F : FS1) {
+					MLTA_DEBUG("\t" << F->getName() << "\n");
+				}
 
 				// Collect targets from dependent types that may propagate
 				// targets to it
@@ -1508,6 +1533,10 @@ bool MLTA::findCalleesWithMLTA(const CallInst *CI,
 			// because of casting, so let's do intersection
 			intersectFuncSets(FS1, FS, FS2);
 			FS = FS2;
+			MLTA_DEBUG("[INTERSECT] " << FS.size() << "\n");
+			for (auto F : FS) {
+				MLTA_DEBUG("\t" << F->getName() << "\n");
+			}
 
 			CV = NextV;
 
@@ -1657,6 +1686,7 @@ bool MLTA::typeConfineInStore(StoreInst *SI) {
 	// Case 1: The value operand is a function
 	Function *F = dyn_cast<Function>(VO);
 	if (F) {
+		F = getFuncDef(F);
 		typeIdxFuncsMap[typeHash(PBTy)][IdxP].insert(F);
 		confineTargetFunction(PO, F);
 		return true;
@@ -1695,6 +1725,7 @@ bool MLTA::typeConfineInStore(StoreInst *SI) {
 				Value * FV =
 					dyn_cast<BitCastOperator>(VO)->getOperand(0);
 				if (Function *F = dyn_cast<Function>(FV)) {
+					F = getFuncDef(F);
 					typeIdxFuncsMap[typeHash(PBTy)][IdxP].insert(F);
 					confineTargetFunction(PO, F);
 					return true;

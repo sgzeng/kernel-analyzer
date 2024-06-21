@@ -68,10 +68,10 @@ class TyPM : public MLTA {
 		// Variables
 		//
 
-		unordered_set<const CallInst*> CallSet;
-		unordered_set<const CallInst*> ICallSet;
-		unordered_set<const CallInst*> MatchedICallSet;
-		unordered_set<const StoreInst*> StoreInstSet;
+		vector<const CallInst*> CallSet;
+		vector<const CallInst*> ICallSet;
+		vector<const CallInst*> MatchedICallSet;
+		set<const StoreInst*> StoreInstSet;
 
 
 		//
