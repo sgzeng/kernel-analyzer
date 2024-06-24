@@ -405,6 +405,9 @@ bool CallGraphPass::runOnFunction(Function *F) {
         break;
       }
       bool typeShortcut = false;
+#if LLVM_VERSION_MAJOR < 15
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
       Type *Ty = I->getType();
       if (PointerType *ptrTy = dyn_cast<PointerType>(Ty)) {
         Type *ElTy = ptrTy->getElementType();
@@ -420,6 +423,8 @@ bool CallGraphPass::runOnFunction(Function *F) {
           }
         }
       }
+#pragma clang diagnostic pop
+#endif
       // normal handling
       bool isNull = false;
       Value *ptr = I->getOperand(0);
@@ -676,7 +681,10 @@ bool CallGraphPass::doInitialization(Module *M) {
   for (auto &GV : M->globals()) {
     if (Ctx->ExtGobjs.find(GV.getGUID()) != Ctx->ExtGobjs.end())
       continue;
-    Type *Ty = GV.getType()->getElementType();
+    auto init = GV.getInitializer();
+    if (!init)
+      continue;
+    Type *Ty = init->getType();
     // collapse array type
     while (ArrayType *AT = dyn_cast<ArrayType>(Ty))
       Ty = AT->getElementType();
@@ -720,6 +728,9 @@ bool CallGraphPass::doInitialization(Module *M) {
       unvisited.insert(&F);
     }
 
+#if LLVM_VERSION_MAJOR < 15
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     // type shortcut heuristic?
     Type *retTy = F.getReturnType();
     if (PointerType *ptrTy = dyn_cast<PointerType>(retTy)) {
@@ -746,6 +757,8 @@ bool CallGraphPass::doInitialization(Module *M) {
         }
       }
     }
+#pragma clang diagnostic pop
+#endif
   }
 
   return false;
