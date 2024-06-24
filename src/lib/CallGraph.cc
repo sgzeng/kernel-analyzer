@@ -68,7 +68,7 @@ bool CallGraphPass::isCompatibleType(Type *T1, Type *T2) {
     if (ElT1->isIntegerTy(8) || ElT2->isIntegerTy(8))
       return true;
 
-      return isCompatibleType(ElT1, ElT2);
+    return isCompatibleType(ElT1, ElT2);
 #endif
   } else if (T1->isArrayTy()) {
     if (!T2->isArrayTy())
