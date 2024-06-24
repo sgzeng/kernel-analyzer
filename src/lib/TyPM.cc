@@ -1175,6 +1175,7 @@ bool TyPM::resolveFunctionTargets() {
 		printTargets(Ctx->Callees[CI], CI);
 #endif
 	}
+#if PRINT_ICALL_TARGET
 	if (NumIndirectCallTargets > 0) {
 		time_t my_time = time(NULL);
 		OP<<"# TIME: "<<ctime(&my_time)<<"\n";
@@ -1191,6 +1192,10 @@ bool TyPM::resolveFunctionTargets() {
 			<<((oldModuleCount - newModuleCount)*(float)100)/oldModuleCount<<"\%\n\n";
 	}
 	cout<<"@@ Out-of-scope Count: "<<outScopeCount<<"\n\n";
+#else
+	(void)oldModuleCount;
+	(void)newModuleCount;
+#endif
 	if (newCount + outScopeCount == oldCount) {
 		// Done with the iteration
 		return false;
