@@ -495,7 +495,7 @@ std::string ReachableCallGraphPass::getSourceLocation(const BasicBlock *BB) {
   return "NoLoc:0";
 }
 
-void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution) {
+void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
   std::deque<const BasicBlock*> worklist;
   std::unordered_set<const BasicBlock*> visited;
   double currentDist = std::numeric_limits<double>::max();;
@@ -511,6 +511,9 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution) {
     return;
   }
 
+  // set precision
+  OS << std::fixed << std::setprecision(6);
+
   // dump reachable bb
   while (!worklist.empty()) {
     auto *BB = worklist.front();
@@ -520,10 +523,7 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution) {
       currentDist = dist;
       RA_DEBUG("Best option: " << BB->getParent()->getName() << " at " << currentDist << "\n");
     }
-    OS << getSourceLocation(BB) << ",";
-    std::ostringstream formattedDistance;
-    formattedDistance << std::fixed << std::setprecision(6) << distances[BB] * 1000;
-    OS << formattedDistance.str() << "\n";
+    OS << getSourceLocation(BB) << "," << distances[BB] * 1000 << "\n";
 
     for (auto &I : *BB) {
       // check for callees
@@ -549,7 +549,10 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution) {
   }
 }
 
-void ReachableCallGraphPass::dumpPolicy(raw_ostream &OS, bool dumpUnreachable) {
+void ReachableCallGraphPass::dumpPolicy(std::ostream &OS, bool dumpUnreachable) {
+
+  // set precision
+  OS << std::fixed << std::setprecision(6);
 
   for (const auto &kv : distances) {
     auto *BB = kv.first;
@@ -563,18 +566,14 @@ void ReachableCallGraphPass::dumpPolicy(raw_ostream &OS, bool dumpUnreachable) {
     OS << getBasicBlockId(BB) << ",";
     auto itr = distances.find(FT);
     if (itr != distances.end()) {
-      std::ostringstream formattedDistance;
-      formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
-      OS << formattedDistance.str() << ",";
+      OS << itr->second * 1000 << ",";
       reached = true;
     } else {
       OS << "inf,";
     }
     itr = distances.find(TT);
     if (itr != distances.end()) {
-      std::ostringstream formattedDistance;
-      formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
-      OS << formattedDistance.str() << "\n";
+      OS << itr->second * 1000 << "\n";
       reached = true;
     } else {
       OS << "inf\n";
@@ -598,21 +597,7 @@ void ReachableCallGraphPass::dumpPolicy(raw_ostream &OS, bool dumpUnreachable) {
   if (dumpUnreachable) {
     for (auto BB : exitBBs) {
       if (distances.find(BB) == distances.end()) {
-        for (auto &I : *BB) {
-          auto &loc = I.getDebugLoc();
-          if (loc && loc->getLine() != 0) {
-            auto f = loc->getFilename();
-            if (f.empty()) {
-              f = BB->getParent()->getParent()->getSourceFileName();
-            }
-            if (f.find("./") == 0) {
-              f = f.substr(2);
-            }
-            OS << f << ":" << loc->getLine() << ",";
-            break;
-          }
-        }
-        OS << "inf\n";
+        OS << getBasicBlockId(BB) << ",inf\n";
       }
     }
   }

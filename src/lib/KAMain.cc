@@ -42,14 +42,15 @@ cl::list<std::string> InputFilenames(
 cl::opt<unsigned> VerboseLevel(
   "verbose", cl::desc("Verbose level"), cl::init(0));
 
-// cl::opt<bool> DumpCallees(
-//   "dump-call-graph", cl::desc("Dump call graph"), cl::NotHidden, cl::init(false));
-
-// cl::opt<bool> DumpCallers(
-//   "dump-caller-graph", cl::desc("Dump caller graph"), cl::NotHidden, cl::init(false));
-
 cl::opt<std::string> TargetList(
   "target-list", cl::desc("Target list"), cl::init(""));
+
+cl::opt<std::string> DumpPolicy(
+  "dump-policy", cl::desc("Dump static policy"), cl::init(""));
+
+cl::opt<std::string> DumpDistance(
+  "dump-distance", cl::desc("Dump distance"), cl::init(""));
+
 
 GlobalContext GlobalCtx;
 
@@ -197,8 +198,14 @@ int main(int argc, char **argv) {
 
   ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList, false);
   RCGPass.run(GlobalCtx.Modules);
-  RCGPass.dumpPolicy(outs());
-  RCGPass.dumpDistance(outs());
+  if (!DumpPolicy.empty()) {
+    std::ofstream policy(DumpPolicy);
+    RCGPass.dumpPolicy(policy);
+  }
+  if (!DumpDistance.empty()) {
+    std::ofstream distance(DumpDistance);
+    RCGPass.dumpDistance(distance);
+  }
 
   return 0;
 }
