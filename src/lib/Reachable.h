@@ -4,6 +4,7 @@
 #include <llvm/IR/Value.h>
 
 #include <deque>
+#include <limits>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -30,16 +31,19 @@ private:
   std::unordered_set<const llvm::BasicBlock*> entryBBs;
 
 public:
-    ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList, bool typeBased = true);
+    ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList,
+        bool typeBased = true);
     virtual bool doInitialization(llvm::Module *);
     virtual bool doFinalization(llvm::Module *);
     virtual void run(ModuleList &modules);
 
     // simple bfs pass
-    void collectReachable(std::deque<const BasicBlock*> &worklist, std::unordered_set<const BasicBlock*> &reachable);
+    void collectReachable(std::deque<const BasicBlock*> &worklist,
+        std::unordered_set<const BasicBlock*> &reachable);
 
     // debug
-    void dumpDistance(llvm::raw_ostream &OS, bool dumpSolution = false, bool dumpUnreachable = false);
+    void dumpDistance(llvm::raw_ostream &OS,
+        bool dumpSolution = false, bool dumpUnreachable = false);
     void dumpCallees();
     void dumpCallers();
 };

@@ -19,8 +19,8 @@
 
 #include <algorithm>
 #include <cassert>
-#include <iomanip>
 #include <fstream>
+#include <iomanip>
 #include <vector>
 
 #include "Reachable.h"
@@ -344,8 +344,10 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
     }
   }
 
-  if (!reached)
+  if (!reached) {
+    WARNING("Target not reachable from entry BBs\n");
     return;
+  }
 
   // now calculate distances in a bottom-up manner
   for (const auto &kv : distances)
@@ -357,11 +359,11 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
     // check predecessors
     for (auto PI = pred_begin(BB), PE = pred_end(BB); PI != PE; ++PI) {
       auto *Pred = *PI;
-      int numSucc = 0;
+      double numSucc = 0.0;
       double prob = 0.0;
       for (auto SI = succ_begin(Pred), SE = succ_end(Pred); SI != SE; ++SI) {
         auto *Succ = *SI;
-        numSucc++;
+        numSucc += 1.0;
         // unreachable one has prob 0
         if (reachableBBs.find(Succ) == reachableBBs.end())
           continue;
@@ -371,10 +373,12 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
         }
       }
       prob /= numSucc;
+      assert(prob > 0.0 && "prob dropped to 0");
       auto dist = (-std::log2(prob));
+      assert(dist < std::numeric_limits<double>::max() && "dist overflow");
       // FIXME: propagate to callee through return edge
       auto itr = distances.find(Pred);
-      if (itr == distances.end() || itr->second != dist) {
+      if (itr == distances.end() || itr->second > dist) {
         // RA_DEBUG("Adding Pred: " << *Pred << " with prob " << prob << "\n");
         distances[Pred] = dist;
         worklist.push_back(Pred);
@@ -407,19 +411,17 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
         if (!CI->isIndirectCall()) {
           // for direct calls, prob can be propagated directly
           auto itr2 = distances.find(CBB);
-          if (itr2 == distances.end() || itr2->second != dist) {
+          if (itr2 == distances.end() || itr2->second > dist) {
             RA_DEBUG("Adding direct caller: " << CI->getFunction()->getName() << "\n");
             distances[CBB] = dist;
             worklist.push_back(CBB);
           }
         } else {
           // indirect call is tricky, treat like predecessors
-          auto old = distances[CBB];
           // for each call site, check if all its callees have been processed
-          int numCallees = 0;
           double prob = 0.0;
-          for (auto F : calleeByType[CI]) {
-            numCallees++;
+          FuncSet &Callees = UseTypeBasedCallGraph ? calleeByType[CI] : Ctx->Callees[CI];
+          for (auto F : Callees) {
             auto CEBB = const_cast<BasicBlock*>(&F->getEntryBlock());
             if (reachableBBs.find(CEBB) == reachableBBs.end()) {
               continue;
@@ -430,9 +432,12 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
             }
           }
           // for indirect call, prob needs to be divided by the number of potential callees
-          prob /= numCallees;
+          prob /= (double)Callees.size();
+          assert(prob > 0.0 && "prob dropped to 0");
           auto dist = (-std::log2(prob));
-          if (old != dist) {
+          assert(dist < std::numeric_limits<double>::max() && "dist overflow");
+          auto itr2 = distances.find(CBB);
+          if (itr2 == distances.end() || itr2->second > dist) {
             RA_DEBUG("Adding indirect caller: " << CI->getFunction()->getName() << "\n");
             distances[CBB] = dist;
             worklist.push_back(CBB);
@@ -476,7 +481,7 @@ ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_,
 void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bool dumpUnreachable) {
   std::deque<const BasicBlock*> worklist;
   std::unordered_set<const BasicBlock*> visited;
-  unsigned long currentDist = -1;
+  double currentDist = std::numeric_limits<double>::max();;
   for (auto BB : entryBBs) {
     if (distances.find(BB) != distances.end()) {
       RA_LOG("Entry BB of " << BB->getParent()->getName() << " is reachable\n");
@@ -519,7 +524,7 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
         // check for callees
         if (const CallInst *CI = dyn_cast<CallInst>(&I)) {
           auto itr = Ctx->Callees.find(CI);
-          if (itr == Ctx->Callees.end()) {
+          if (itr == Ctx->Callees.end() && UseTypeBasedCallGraph) {
             itr = calleeByType.find(CI);
           }
           for (auto F: itr->second) {
@@ -546,12 +551,14 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
         continue;
       auto TT = branch->getSuccessor(0);
       auto FT = branch->getSuccessor(1);
+      bool reached = false;
       OS << getBasicBlockId(BB) << ",";
       auto itr = distances.find(FT);
       if (itr != distances.end()) {
         std::ostringstream formattedDistance;
         formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
         OS << formattedDistance.str() << ",";
+        reached = true;
       } else {
         OS << "inf,";
       }
@@ -560,8 +567,22 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
         std::ostringstream formattedDistance;
         formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
         OS << formattedDistance.str() << "\n";
+        reached = true;
       } else {
         OS << "inf\n";
+      }
+      if (!reached) {
+        bool hasCall = false;
+        for (auto &I : *BB) {
+          if (isa<CallInst>(I)) {
+            hasCall = true;
+            break;
+          }
+        }
+        if (!hasCall) {
+          WARNING("Branch reachable but both targets are not!! " << *BB
+              << "\nAnd no call in the BB\n");
+        }
       }
     }
   }
