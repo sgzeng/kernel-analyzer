@@ -16,6 +16,7 @@ private:
   bool runOnFunction(llvm::Function*);
   bool isCompatibleType(llvm::Type *T1, llvm::Type *T2);
   bool findCalleesByType(llvm::CallInst*, FuncSet&);
+  std::string getSourceLocation(const llvm::BasicBlock *BB);
 
   GlobalContext *Ctx;
 
@@ -42,8 +43,8 @@ public:
         std::unordered_set<const BasicBlock*> &reachable);
 
     // debug
-    void dumpDistance(llvm::raw_ostream &OS,
-        bool dumpSolution = false, bool dumpUnreachable = false);
+    void dumpDistance(llvm::raw_ostream &OS, bool dumpSolution = false);
+    void dumpPolicy(llvm::raw_ostream &OS, bool dumpUnreachable = false);
     void dumpCallees();
     void dumpCallers();
 };

@@ -197,6 +197,7 @@ int main(int argc, char **argv) {
 
   ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList, false);
   RCGPass.run(GlobalCtx.Modules);
+  RCGPass.dumpPolicy(outs());
   RCGPass.dumpDistance(outs());
 
   return 0;

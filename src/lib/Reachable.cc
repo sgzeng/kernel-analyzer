@@ -478,7 +478,24 @@ ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_,
   }
 }
 
-void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bool dumpUnreachable) {
+std::string ReachableCallGraphPass::getSourceLocation(const BasicBlock *BB) {
+  for (auto &I : *BB) {
+    auto &loc = I.getDebugLoc();
+    if (loc && loc.getLine() != 0) {
+      auto f = loc->getFilename().str();
+      if (f.empty()) {
+        f = BB->getParent()->getParent()->getSourceFileName();
+      }
+      if (f.find("./") == 0) {
+        f = f.substr(2);
+      }
+      return f + ":" + std::to_string(loc->getLine());
+    }
+  }
+  return "NoLoc:0";
+}
+
+void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution) {
   std::deque<const BasicBlock*> worklist;
   std::unordered_set<const BasicBlock*> visited;
   double currentDist = std::numeric_limits<double>::max();;
@@ -493,96 +510,86 @@ void ReachableCallGraphPass::dumpDistance(raw_ostream &OS, bool dumpSolution, bo
     WARNING("Target not reachable from entry BBs\n");
     return;
   }
+
   // dump reachable bb
-  if (dumpSolution) {
-    while (!worklist.empty()) {
-      auto *BB = worklist.front();
-      worklist.pop_front();
-      if (distances[BB] < currentDist) {
-        currentDist = distances[BB];
-        RA_DEBUG("Best option: " << BB->getParent()->getName() << " at " << currentDist << "\n");
-      }
-      bool printed = false;
-      for (auto &I : *BB) {
-        if (!printed) {
-          auto &loc = I.getDebugLoc();
-          if (loc && loc->getLine() != 0) {
-            auto f = loc->getFilename();
-            if (f.empty()) {
-              f = BB->getParent()->getParent()->getSourceFileName();
-            }
-            if (f.find("./") == 0) {
-              f = f.substr(2);
-            }
-            OS << f << ":" << loc->getLine() << ",";
-            std::ostringstream formattedDistance;
-            formattedDistance << std::fixed << std::setprecision(6) << distances[BB] * 1000;
-            OS << formattedDistance.str() << "\n";
-            printed = true;
-          }
+  while (!worklist.empty()) {
+    auto *BB = worklist.front();
+    worklist.pop_front();
+    auto dist = distances[BB];
+    if (dumpSolution && (dist < currentDist)) {
+      currentDist = dist;
+      RA_DEBUG("Best option: " << BB->getParent()->getName() << " at " << currentDist << "\n");
+    }
+    OS << getSourceLocation(BB) << ",";
+    std::ostringstream formattedDistance;
+    formattedDistance << std::fixed << std::setprecision(6) << distances[BB] * 1000;
+    OS << formattedDistance.str() << "\n";
+
+    for (auto &I : *BB) {
+      // check for callees
+      if (const CallInst *CI = dyn_cast<CallInst>(&I)) {
+        auto itr = Ctx->Callees.find(CI);
+        if (itr == Ctx->Callees.end() && UseTypeBasedCallGraph) {
+          itr = calleeByType.find(CI);
         }
-        // check for callees
-        if (const CallInst *CI = dyn_cast<CallInst>(&I)) {
-          auto itr = Ctx->Callees.find(CI);
-          if (itr == Ctx->Callees.end() && UseTypeBasedCallGraph) {
-            itr = calleeByType.find(CI);
+        for (auto F: itr->second) {
+          auto *FBB = &F->getEntryBlock();
+          if (distances.find(FBB) != distances.end() && visited.insert(FBB).second) {
+            worklist.push_back(FBB);
           }
-          for (auto F: itr->second) {
-            auto *FBB = &F->getEntryBlock();
-            if (distances.find(FBB) != distances.end() && visited.insert(FBB).second) {
-              worklist.push_back(FBB);
-            }
-          }
-        }
-      }
-      for (auto SI = succ_begin(BB), SE = succ_end(BB); SI != SE; ++SI) {
-        auto *Succ = *SI;
-        if (distances.find(Succ) != distances.end() && visited.insert(Succ).second) {
-          worklist.push_back(Succ);
         }
       }
     }
-  } else {
-    for (const auto &kv : distances) {
-      auto *BB = kv.first;
-      auto term = BB->getTerminator();
-      auto branch = dyn_cast<BranchInst>(term);
-      if (!branch || !branch->isConditional())
-        continue;
-      auto TT = branch->getSuccessor(0);
-      auto FT = branch->getSuccessor(1);
-      bool reached = false;
-      OS << getBasicBlockId(BB) << ",";
-      auto itr = distances.find(FT);
-      if (itr != distances.end()) {
-        std::ostringstream formattedDistance;
-        formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
-        OS << formattedDistance.str() << ",";
-        reached = true;
-      } else {
-        OS << "inf,";
+    for (auto SI = succ_begin(BB), SE = succ_end(BB); SI != SE; ++SI) {
+      auto *Succ = *SI;
+      if (distances.find(Succ) != distances.end() && visited.insert(Succ).second) {
+        worklist.push_back(Succ);
       }
-      itr = distances.find(TT);
-      if (itr != distances.end()) {
-        std::ostringstream formattedDistance;
-        formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
-        OS << formattedDistance.str() << "\n";
-        reached = true;
-      } else {
-        OS << "inf\n";
+    }
+  }
+}
+
+void ReachableCallGraphPass::dumpPolicy(raw_ostream &OS, bool dumpUnreachable) {
+
+  for (const auto &kv : distances) {
+    auto *BB = kv.first;
+    auto term = BB->getTerminator();
+    auto branch = dyn_cast<BranchInst>(term);
+    if (!branch || !branch->isConditional())
+      continue;
+    auto TT = branch->getSuccessor(0);
+    auto FT = branch->getSuccessor(1);
+    bool reached = false;
+    OS << getBasicBlockId(BB) << ",";
+    auto itr = distances.find(FT);
+    if (itr != distances.end()) {
+      std::ostringstream formattedDistance;
+      formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
+      OS << formattedDistance.str() << ",";
+      reached = true;
+    } else {
+      OS << "inf,";
+    }
+    itr = distances.find(TT);
+    if (itr != distances.end()) {
+      std::ostringstream formattedDistance;
+      formattedDistance << std::fixed << std::setprecision(6) << itr->second * 1000;
+      OS << formattedDistance.str() << "\n";
+      reached = true;
+    } else {
+      OS << "inf\n";
+    }
+    if (!reached) {
+      bool hasCall = false;
+      for (auto &I : *BB) {
+        if (isa<CallInst>(I)) {
+          hasCall = true;
+          break;
+        }
       }
-      if (!reached) {
-        bool hasCall = false;
-        for (auto &I : *BB) {
-          if (isa<CallInst>(I)) {
-            hasCall = true;
-            break;
-          }
-        }
-        if (!hasCall) {
-          WARNING("Branch reachable but both targets are not!! " << *BB
-              << "\nAnd no call in the BB\n");
-        }
+      if (!hasCall) {
+        WARNING("Branch reachable but both targets are not!! " << *BB
+            << "\nAnd no call in the BB\n");
       }
     }
   }
