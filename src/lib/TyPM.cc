@@ -1014,7 +1014,7 @@ void TyPM::getDependentModulesV(const Value* TV, const Module *M,
 
 	// Get the outermost layer type
 	typelist_t TyList;
-	const Value *CV = TV, *NextV;
+	const Value *CV = TV, *NextV = NULL;
 	visited_t Visited;
 	while (nextLayerBaseTypeWL(CV, TyList, NextV)) {
 		Visited.insert(CV);
