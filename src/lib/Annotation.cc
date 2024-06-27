@@ -251,6 +251,22 @@ bool isExitFn(StringRef name) {
   else return false;
 }
 
+bool isPrintFn(StringRef name) {
+  if (name.find("print") != StringRef::npos ||
+    name.find("dump") != StringRef::npos ||
+    name.find("log") != StringRef::npos ||
+    name.find("warn") != StringRef::npos ||
+    name.find("info") != StringRef::npos ||
+    name.find("msg") != StringRef::npos ||
+    name.find("trace") != StringRef::npos ||
+    name.find("report") != StringRef::npos ||
+    name.find("show") != StringRef::npos ||
+    name.find("display") != StringRef::npos ||
+    name.find("dmsg") != StringRef::npos)
+    return true;
+  else return false;
+}
+
 std::string getStoreId(StoreInst *SI) {
   StringRef Id = getLoadStoreId(SI);
   if (!Id.empty())
