@@ -52,15 +52,15 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
   
   // user space
   // malloc/new
-  if (!name.compare("malloc") ||
-      !name.compare("_Znwj") ||
-    !name.compare("_ZnwjRKSt9nothrow_t") ||
-    !name.compare("_Znwm") ||
-    !name.compare("_ZnwmRKSt9nothrow_t") ||
-    !name.compare("_Znaj") ||
-    !name.compare("_ZnajRKSt9nothrow_t") ||
-    !name.compare("_Znam") ||
-    !name.compare("_ZnamRKSt9nothrow_t")) {
+  if (name.equals("malloc") ||
+    name.equals("_Znwj") ||
+    name.equals("_ZnwjRKSt9nothrow_t") ||
+    name.equals("_Znwm") ||
+    name.equals("_ZnwmRKSt9nothrow_t") ||
+    name.equals("_Znaj") ||
+    name.equals("_ZnajRKSt9nothrow_t") ||
+    name.equals("_Znam") ||
+    name.equals("_ZnamRKSt9nothrow_t")) {
     *size = 0;
     *flag = -1;
     return true;
@@ -68,8 +68,8 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
 
   // kmalloc
   // don't handle variable length yet
-  if (!name.compare("kmalloc_array") ||
-    !name.compare("kcalloc"))
+  if (name.equals("kmalloc_array") ||
+    name.equals("kcalloc"))
     return false;
 
   if (name.startswith("kmalloc") ||
@@ -82,35 +82,35 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
 
   // kmem_cache_alloc
   if (name.startswith("kmem_cache_alloc") ||
-    !name.compare("kmem_cache_zalloc")) {
+    name.equals("kmem_cache_zalloc")) {
     *size = -1;
     *flag = 1;
     return true;
   }
 
   // kmemdup
-  if (!name.compare("kmemdup")) {
+  if (name.equals("kmemdup")) {
     *size = 1;
     *flag = 2;
     return true;
   }
 
-  if (!name.compare("kstrndup") ||
-      !name.compare("kstrdup"))
+  if (name.equals("kstrndup") ||
+      name.equals("kstrdup"))
     return false;
 
-  if (!name.compare("krealloc") ||
-    !name.compare("__krealloc")) {
+  if (name.equals("krealloc") ||
+    name.equals("__krealloc")) {
     *size = 1;
     *flag = 2;
     return true;
   }
   
   // driver/base
-  if (!name.compare("devm_kzalloc") ||
-    !name.compare("alloc_dr") ||
-    !name.compare("__devres_alloc") ||
-    !name.compare("devres_alloc")) {
+  if (name.equals("devm_kzalloc") ||
+    name.equals("alloc_dr") ||
+    name.equals("__devres_alloc") ||
+    name.equals("devres_alloc")) {
     *size = 1;
     *flag = 2;
     return true;
@@ -118,28 +118,28 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
 
 #if 0
   // page alloc
-  if (!name.compare("__get_free_pages") ||
-    !name.compare("get_zeroed_page"))
+  if (name.equals("__get_free_pages") ||
+    name.equals("get_zeroed_page"))
     return 1;
 
-  if (!name.compare("__alloc_pages_nodemask") ||
-    !name.compare("__alloc_pages") ||
-    !name.compare("alloc_pages_current") ||
-    !name.compare("alloc_pages") ||
-    !name.compare("alloc_pages_vma"))
+  if (name.equals("__alloc_pages_nodemask") ||
+    name.equals("__alloc_pages") ||
+    name.equals("alloc_pages_current") ||
+    name.equals("alloc_pages") ||
+    name.equals("alloc_pages_vma"))
     return 1;
 
-  if (!name.compare("alloc_pages_node") ||
-    !name.compare("alloc_pages_exact_node") ||
-    !name.compare("alloc_pages_exact") ||
-    !name.compare("alloc_pages_exact_nid"))
+  if (name.equals("alloc_pages_node") ||
+    name.equals("alloc_pages_exact_node") ||
+    name.equals("alloc_pages_exact") ||
+    name.equals("alloc_pages_exact_nid"))
     return 2;
 
   // pagemap
-  if (!name.compare("__page_cache_alloc"))
+  if (name.equals("__page_cache_alloc"))
     return 1;
 
-  if (!name.compare("find_or_create_page"))
+  if (name.equals("find_or_create_page"))
     return 3;
 
   // vmalloc
@@ -147,26 +147,26 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
     name.startswith("vzalloc"))
     return -1; // don't really have flags
 
-  if (!name.compare("__vmalloc"))
+  if (name.equals("__vmalloc"))
     return 2;
 
-  if (!name.compare("__vmalloc_node_range"))
+  if (name.equals("__vmalloc_node_range"))
     return 5;
 
 #if 0
   // DMA related
-  if (!name.compare("dmam_alloc_coherent") ||
-    !name.compare("dmam_alloc_noncoherent") ||
-    !name.compare("dma_alloc_coherent") ||
-    !name.compare("dma_alloc_at_attrs") ||
-    !name.compare("dma_alloc_attrs") ||
-    !name.compare("arm_dma_alloc") ||
-    !name.compare("dma_alloc_writecombine") ||
+  if (name.equals("dmam_alloc_coherent") ||
+    name.equals("dmam_alloc_noncoherent") ||
+    name.equals("dma_alloc_coherent") ||
+    name.equals("dma_alloc_at_attrs") ||
+    name.equals("dma_alloc_attrs") ||
+    name.equals("arm_dma_alloc") ||
+    name.equals("dma_alloc_writecombine") ||
     (name.find("swiotlb_alloc_coherent") != llvm::StringRef::npos) ||
-    !name.compare("arm_coherent_dma_alloc"))
+    name.equals("arm_coherent_dma_alloc"))
     return 4;
 
-  if (!name.compare("dma_pool_alloc"))
+  if (name.equals("dma_pool_alloc"))
     return 2;
 #endif
 
@@ -176,25 +176,25 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
 #endif
 
   // bio
-  if (!name.compare("bio_alloc_bioset")) {
+  if (name.equals("bio_alloc_bioset")) {
     *size = -1;
     *flag = 0;
     return true;
   }
 
-  if (!name.compare("hcd_buffer_alloc")) {
+  if (name.equals("hcd_buffer_alloc")) {
     *size = 1;
     *flag = 2;
     return false;
   }
 
-  if (!name.compare("sk_prot_alloc")) {
+  if (name.equals("sk_prot_alloc")) {
     *size = -1;
     *flag = 1;
     return true;
   }
 
-  if (!name.compare("sk_alloc")) {
+  if (name.equals("sk_alloc")) {
     *size = -1;
     *flag = 2;
     return true;
@@ -202,33 +202,51 @@ bool isAllocFn(StringRef name, int *size, int *flag) {
 
   // mempool
   // XXX needs special care
-  if (!name.compare("mempool_alloc")) {
+  if (name.equals("mempool_alloc")) {
     *size = -1;
     *flag = 1;
     return false;
   }
 
-  if (!name.compare("mempool_alloc_slab") ||
-    !name.compare("mempool_kmalloc")) {
+  if (name.equals("mempool_alloc_slab") ||
+    name.equals("mempool_kmalloc")) {
     *size = -1;
     *flag = 0;
     return true;
   }
 
-  if (!name.compare("mempool_alloc_pages"))
+  if (name.equals("mempool_alloc_pages"))
     return false;
 
   return false;
 }
 
+bool isEntryFn(StringRef name) {
+  if (name.equals("main") ||
+    name.startswith("do_syscall_") ||
+    name.endswith("do_softirq") ||
+    name.equals("start_kernel") ||
+    name.equals("init") ||
+    name.equals("module_init") ||
+    name.equals("module_exit") ||
+    name.equals("init_module") ||
+    name.equals("cleanup_module") ||
+    name.equals("do_init_module") ||
+    name.equals("do_cleanup_module") ||
+    name.equals("do_one_initcall") ||
+    name.equals("do_one_initcall_sync"))
+    return true;
+  else return false;
+}
+
 bool isExitFn(StringRef name) {
-  if (!name.compare("exit") ||
-    !name.compare("_exit") ||
-    !name.compare("_Exit") ||
-    !name.compare("exit_group") ||
-    !name.compare("panic") ||
-    !name.compare("BUG") ||
-    !name.compare("BUG_ON"))
+  if (name.equals("exit") ||
+    name.equals("_exit") ||
+    name.equals("_Exit") ||
+    name.equals("exit_group") ||
+    name.equals("panic") ||
+    name.equals("BUG") ||
+    name.equals("BUG_ON"))
     return true;
   else return false;
 }
