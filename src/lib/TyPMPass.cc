@@ -282,6 +282,11 @@ bool TyPMCGPass::doFinalization(Module *M) {
 		for (auto CI : CallSet) {
 			mapDeclToActualFuncs(MLTA::Ctx->Callees[CI]);
 
+			// map to callers again
+			for (auto F : MLTA::Ctx->Callees[CI]) {
+				MLTA::Ctx->Callers[F].insert(CI);
+			}
+
 			if (CI->isIndirectCall()) {
 				NumIndirectCallTargets += MLTA::Ctx->Callees[CI].size();
 #if PRINT_ICALL_TARGET
