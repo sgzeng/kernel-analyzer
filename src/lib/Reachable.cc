@@ -251,8 +251,16 @@ bool ReachableCallGraphPass::doInitialization(Module *M) {
       }
     }
 
-    // collect the exit block of the main too
-    if (isEntryFn(F.getName())) {
+    // if no entry specified, use the common one
+    // collect the exit block of the entry function too
+    bool isEntry = false;
+    if (entryList.empty()) {
+      isEntry = isEntryFn(F.getName());
+    } else {
+      auto itr = std::find(entryList.begin(), entryList.end(), F.getName().str());
+      isEntry = (itr != entryList.end());
+    }
+    if (isEntry) {
       entryBBs.insert(&F.getEntryBlock());
       for (auto &BB : F) {
         if (isa<ReturnInst>(BB.getTerminator())) {
@@ -280,9 +288,13 @@ void ReachableCallGraphPass::collectReachable(std::deque<const BasicBlock*> &wor
         worklist.push_back(Pred);
       }
     }
-    // entry block, add caller
+    // entry block, add caller, if not entry
     auto *F = BB->getParent();
     if (BB == &F->getEntryBlock()) {
+      if (entryBBs.find(BB) != entryBBs.end()) {
+        RA_LOG("Entry func " << F->getName() << " is reachable\n");
+        continue;
+      }
       auto itr = Ctx->Callers.find(F);
       if (itr == Ctx->Callers.end()) {
         bool found = false;
@@ -291,9 +303,7 @@ void ReachableCallGraphPass::collectReachable(std::deque<const BasicBlock*> &wor
           found = (itr != callerByType.end());
         }
         if (!found) {
-          if (!isEntryFn(F->getName())) {
-            WARNING("No caller for " << F->getName() << "\n");
-          }
+          WARNING("No caller for " << F->getName() << "\n");
           continue;
         }
       }
@@ -412,6 +422,11 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
     // entry block has no predecessor, add caller
     auto *F = BB->getParent();
     if (BB == &F->getEntryBlock()) {
+      if (entryBBs.find(BB) != entryBBs.end()) {
+        RA_LOG("Entry func " << F->getName() << " is reachable\n");
+        break;
+        // continue;
+      }
       auto itr = Ctx->Callers.find(F);
       if (itr == Ctx->Callers.end()) {
         bool found = false;
@@ -497,9 +512,10 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
 }
 
 ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_,
-  std::string TargetList, bool typeBased)
+  std::string &TargetList, std::string &EntryList, bool typeBased)
   : Ctx(Ctx_), UseTypeBasedCallGraph(typeBased) {
   // parse target list
+  // format: filename:line_number
   if (!TargetList.empty()) {
     std::ifstream ifs(TargetList);
     if (!ifs.is_open()) {
@@ -518,6 +534,21 @@ ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_,
       int il = std::stoi(l);
       RA_LOG("Target: " << f << ":" << il << "\n");
       targetList.push_back(std::make_pair(f, il));
+    }
+  }
+  // parse entry list
+  // format: function_name
+  if (!EntryList.empty()) {
+    std::ifstream ifs(EntryList);
+    if (!ifs.is_open()) {
+      KA_ERR("Failed to open entry list file: " << EntryList);
+    }
+    std::string line;
+    while (std::getline(ifs, line)) {
+      if (line.empty() || line[0] == '#')
+        continue;
+      RA_LOG("Entry: " << line << "\n");
+      entryList.push_back(line);
     }
   }
 }

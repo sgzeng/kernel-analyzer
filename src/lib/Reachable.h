@@ -26,14 +26,15 @@ private:
   const bool UseTypeBasedCallGraph;
 
   std::vector<std::pair<std::string, int> > targetList;
+  std::vector<std::string> entryList;
   std::unordered_set<const llvm::BasicBlock*> reachableBBs;
   std::unordered_map<const llvm::BasicBlock*, double> distances;
   std::unordered_set<const llvm::BasicBlock*> exitBBs;
   std::unordered_set<const llvm::BasicBlock*> entryBBs;
 
 public:
-    ReachableCallGraphPass(GlobalContext *Ctx_, std::string TargetList,
-        bool typeBased = true);
+    ReachableCallGraphPass(GlobalContext *Ctx_, std::string &TargetList,
+        std::string &EntryList, bool typeBased = true);
     virtual bool doInitialization(llvm::Module *);
     virtual bool doFinalization(llvm::Module *);
     virtual void run(ModuleList &modules);

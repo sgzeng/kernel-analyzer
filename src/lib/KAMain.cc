@@ -45,6 +45,9 @@ cl::opt<unsigned> VerboseLevel(
 cl::opt<std::string> TargetList(
   "target-list", cl::desc("Target list"), cl::init(""));
 
+cl::opt<std::string> EntryList(
+  "entry-list", cl::desc("Entry list"), cl::init(""));
+
 cl::opt<std::string> DumpPolicy(
   "dump-policy", cl::desc("Dump static policy"), cl::init(""));
 
@@ -115,8 +118,13 @@ void doBasicInitialization(Module *M) {
     auto GVID = GV.getGUID();
     if (GV.hasExternalLinkage()) {
       if (!GV.isDeclaration()) {
-        assert(GlobalCtx.Gobjs.count(GVID) == 0);
         assert(GV.hasInitializer());
+        if (GlobalCtx.Gobjs.count(GVID) != 0) {
+          WARNING("Global variable " << GV.getName()
+              << " has been defined multiple times, previously in "
+              << GlobalCtx.Gobjs[GVID]->getParent()->getModuleIdentifier()
+              << ", and now in " << M->getModuleIdentifier() << "\n");
+        }
         GlobalCtx.Gobjs[GVID] = &GV;
       } else {
         GlobalCtx.ExtGobjs[GVID] = &GV;
@@ -196,7 +204,7 @@ int main(int argc, char **argv) {
   TyPMCGPass TyCG(&GlobalCtx);
   TyCG.run(GlobalCtx.Modules);
 
-  ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList, false);
+  ReachableCallGraphPass RCGPass(&GlobalCtx, TargetList, EntryList, false);
   RCGPass.run(GlobalCtx.Modules);
   if (!DumpPolicy.empty()) {
     std::ofstream policy(DumpPolicy);
@@ -204,9 +212,8 @@ int main(int argc, char **argv) {
   }
   if (!DumpDistance.empty()) {
     std::ofstream distance(DumpDistance);
-    RCGPass.dumpDistance(distance);
+    RCGPass.dumpDistance(distance, true);
   }
 
   return 0;
 }
-
