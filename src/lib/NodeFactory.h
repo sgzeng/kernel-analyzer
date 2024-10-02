@@ -12,6 +12,7 @@
 #include "StructAnalyzer.h"
 #include "PtsSet.h"
 
+#include <map>
 #include <vector>
 #include <set>
 
