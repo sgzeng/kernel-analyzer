@@ -598,7 +598,7 @@ void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
       currentDist = dist;
       RA_LOG("Best option: " << BB->getParent()->getName() << " at " << currentDist << "\n");
     }
-    OS << getSourceLocation(BB) << "," << distances[BB] * 1000 << "\n";
+    OS << getBasicBlockId(BB) << "," << getSourceLocation(BB) << "," << distances[BB] * 1000 << "\n";
 
     for (auto &I : *BB) {
       // check for callees
