@@ -666,7 +666,7 @@ void TyPM::parseUsesOfGV(const GlobalVariable *GV, const Value *V,
 }
 
 
-void TyPM::parseTargetTypesInCalls(const CallInst *CI, const Function *CF) {
+void TyPM::parseTargetTypesInCalls(const CallBase *CI, const Function *CF) {
 
 	const Module *CallerM = CI->getModule();
 	const Module *CalleeM = CF->getParent();

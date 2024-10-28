@@ -78,7 +78,7 @@ string getSourceFuncName(const Instruction *I);
 
 string getValueName(const Value*);
 
-StringRef getCalledFuncName(const CallInst *CI);
+StringRef getCalledFuncName(const CallBase *CI);
 
 string extractMacro(string, const Instruction* I);
 
@@ -93,11 +93,11 @@ string getMacroInfo(const Value *V);
 void getSourceCodeInfo(const Value *V, string &file,
                        unsigned &line);
 
-int8_t getArgNoInCall(const CallInst *CI, Value *Arg);
+int8_t getArgNoInCall(const CallBase *CI, Value *Arg);
 const Argument *getParamByArgNo(const Function *F, int8_t ArgNo);
 
 size_t funcHash(const Function *F, bool withName = false);
-size_t callHash(const CallInst *CI);
+size_t callHash(const CallBase *CI);
 void structTypeHash(StructType *STy, unordered_set<size_t> &HSet);
 size_t typeHash(Type *Ty);
 size_t typeIdxHash(Type *Ty, int Idx = -1);

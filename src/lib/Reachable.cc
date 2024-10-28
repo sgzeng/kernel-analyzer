@@ -214,6 +214,21 @@ bool ReachableCallGraphPass::runOnFunction(Function *F) {
             Changed |= callerByType[F].insert(CI).second;
           }
         }
+      } else if (InvokeInst *II = dyn_cast<InvokeInst>(I)) {
+        if (Function *CF = II->getCalledFunction()) {
+          // direct call
+          auto RCF = getFuncDef(CF);
+          Changed |= Ctx->Callees[II].insert(RCF).second;
+          Changed |= Ctx->Callers[RCF].insert(II).second;
+          // check for call to exit functions
+          if (isExitFn(RCF->getName())) {
+            RA_LOG("Exit Call: " << *II << "\n");
+            exitBBs.insert(II->getParent());
+          }
+        } else if (!II->isInlineAsm()) {
+          // indirect call
+          KA_ERR("Indirect invoke not supported\n");
+        }
       }
     }
 

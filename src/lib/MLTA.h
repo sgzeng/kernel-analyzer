@@ -120,8 +120,8 @@ class MLTA {
 		// API functions
 		////////////////////////////////////////////////////////////////
 		// Use type-based analysis to find targets of indirect calls
-		void findCalleesWithType(const CallInst*, FuncSet&);
-		bool findCalleesWithMLTA(const CallInst *CI, FuncSet &FS);
+		void findCalleesWithType(const CallBase*, FuncSet&);
+		bool findCalleesWithMLTA(const CallBase *CI, FuncSet &FS);
 		bool getTargetsWithLayerType(size_t TyHash, int Idx,
 				FuncSet &FS);
 
@@ -137,8 +137,8 @@ class MLTA {
 		const Function* getFuncDef(const Function* F);
 
 		void unrollLoops(Function *F);
-		void saveCalleesInfo(const CallInst *CI, FuncSet &FS, bool mlta);
-		void printTargets(FuncSet &FS, const CallInst *CI = NULL);
+		void saveCalleesInfo(const CallBase *CI, FuncSet &FS, bool mlta);
+		void printTargets(FuncSet &FS, const CallBase *CI = NULL);
 		void printTypeChain(typelist_t &Chain);
 
 

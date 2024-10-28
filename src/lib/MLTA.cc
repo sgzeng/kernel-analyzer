@@ -98,7 +98,7 @@ bool MLTA::fuzzyTypeMatch(Type *Ty1, Type *Ty2,
 // long as the number and type of parameters of a function matches
 // with the ones of the callsite, we say the function is a possible
 // target of this call.
-void MLTA::findCalleesWithType(const CallInst *CI, FuncSet &S) {
+void MLTA::findCalleesWithType(const CallBase *CI, FuncSet &S) {
 
 	if (CI->isInlineAsm())
 		return;
@@ -874,7 +874,7 @@ const Value *MLTA::getVTable(const Value *V) {
 }
 
 
-void MLTA::saveCalleesInfo(const CallInst *CI, FuncSet &FS,
+void MLTA::saveCalleesInfo(const CallBase *CI, FuncSet &FS,
 		bool mlta) {
 
 	DISubprogram *SP = CI->getParent()->getParent()->getSubprogram();
@@ -928,7 +928,7 @@ void MLTA::printTypeChain(typelist_t &Chain) {
 	OP<<"\n";
 }
 
-void MLTA::printTargets(FuncSet &FS, const CallInst *CI) {
+void MLTA::printTargets(FuncSet &FS, const CallBase *CI) {
 
 	if (CI) {
 #ifdef PRINT_SOURCE_LINE
@@ -1404,7 +1404,7 @@ bool MLTA::getTargetsWithLayerType(size_t TyHash, int Idx,
 }
 
 // The API for MLTA: it returns functions for an indirect call
-bool MLTA::findCalleesWithMLTA(const CallInst *CI,
+bool MLTA::findCalleesWithMLTA(const CallBase *CI,
 		FuncSet &FS) {
 
 	size_t CallHash = callHash(CI);

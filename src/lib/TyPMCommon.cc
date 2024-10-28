@@ -142,7 +142,7 @@ string extractMacro(string line, const Instruction *I) {
 }
 
 /// Get called function name of V.
-StringRef getCalledFuncName(const CallInst *CI) {
+StringRef getCalledFuncName(const CallBase *CI) {
 
 	auto *V = CI->getCalledOperand();
 	assert(V);
@@ -337,7 +337,7 @@ void getSourceCodeInfo(Value *V, string &file,
 	line = Loc->getLine();
 }
 
-int8_t getArgNoInCall(CallInst *CI, Value *Arg) {
+int8_t getArgNoInCall(CallBase *CI, Value *Arg) {
 
 	int8_t Idx = 0;
 	for (auto AI = CI->arg_begin(), E = CI->arg_end();
@@ -444,7 +444,7 @@ size_t funcHash(const Function *F, bool withName) {
 	return str_hash(output);
 }
 
-size_t callHash(const CallInst *CI) {
+size_t callHash(const CallBase *CI) {
 
 	hash<string> str_hash;
 	string sig;

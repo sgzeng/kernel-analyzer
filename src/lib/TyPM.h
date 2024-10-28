@@ -68,9 +68,9 @@ class TyPM : public MLTA {
 		// Variables
 		//
 
-		vector<const CallInst*> CallSet;
-		vector<const CallInst*> ICallSet;
-		vector<const CallInst*> MatchedICallSet;
+		vector<const CallBase*> CallSet;
+		vector<const CallBase*> ICallSet;
+		vector<const CallBase*> MatchedICallSet;
 		set<const StoreInst*> StoreInstSet;
 
 
@@ -157,7 +157,7 @@ class TyPM : public MLTA {
 				typeset_t &WrittenTypes, const Module *M);
 		void findTargetTypesInValue(const Value *V,
 				typeset_t &TargetTypes, const Module *M);
-		void parseTargetTypesInCalls(const CallInst *CI, const Function *CF);
+		void parseTargetTypesInCalls(const CallBase *CI, const Function *CF);
 
 
 		// Maintain the maps
