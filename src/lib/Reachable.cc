@@ -617,7 +617,7 @@ void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
 
     for (auto &I : *BB) {
       // check for callees
-      if (const CallInst *CI = dyn_cast<CallInst>(&I)) {
+      if (const CallBase *CI = dyn_cast<CallBase>(&I)) {
         auto itr = Ctx->Callees.find(CI);
         if (itr == Ctx->Callees.end() && UseTypeBasedCallGraph) {
           itr = calleeByType.find(CI);

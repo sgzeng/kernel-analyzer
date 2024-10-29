@@ -58,9 +58,7 @@ void TyPMCGPass::PhaseMLTA(Function *F) {
 	// Collect callers and callees
 	for (auto i = inst_begin(F), e = inst_end(F); i != e; ++i) {
 		// Map callsite to possible callees.
-		if (isa<CallInst>(&*i) || isa<InvokeInst>(&*i)) {
-
-			CallBase *CI = dyn_cast<CallBase>(&*i);
+		if (CallBase *CI = dyn_cast<CallBase>(&*i)) {
 
 			CallSet.push_back(CI);
 
