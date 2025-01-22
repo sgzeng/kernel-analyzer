@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
   }
   if (!DumpDistance.empty()) {
     std::ofstream distance(DumpDistance);
-    RCGPass.dumpDistance(distance, true);
+    RCGPass.dumpDistance(distance, true, true);
   }
 
   return 0;

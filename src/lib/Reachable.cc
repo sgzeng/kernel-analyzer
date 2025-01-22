@@ -585,7 +585,7 @@ std::string ReachableCallGraphPass::getSourceLocation(const BasicBlock *BB) {
   return "NoLoc:0";
 }
 
-void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
+void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution, bool dumpUnreachable) {
   std::deque<const BasicBlock*> worklist;
   std::unordered_set<const BasicBlock*> visited;
   double currentDist = std::numeric_limits<double>::max();;
@@ -637,9 +637,17 @@ void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
       }
     }
   }
+  // dump unreachable bb
+  if (dumpUnreachable) {
+    for (auto BB : exitBBs) {
+      if (distances.find(BB) == distances.end()) {
+        OS << getBasicBlockId(BB) << "," << getSourceLocation(BB) << ",-1\n";
+      }
+    }
+  }
 }
 
-void ReachableCallGraphPass::dumpPolicy(std::ostream &OS, bool dumpUnreachable) {
+void ReachableCallGraphPass::dumpPolicy(std::ostream &OS) {
 
   // set precision
   OS << std::fixed << std::setprecision(6);
@@ -679,15 +687,6 @@ void ReachableCallGraphPass::dumpPolicy(std::ostream &OS, bool dumpUnreachable) 
       if (!hasCall) {
         WARNING("Branch reachable but both targets are not!! " << *BB
             << "\nAnd no call in the BB\n");
-      }
-    }
-  }
-
-  // dump unreachable bb
-  if (dumpUnreachable) {
-    for (auto BB : exitBBs) {
-      if (distances.find(BB) == distances.end()) {
-        OS << getBasicBlockId(BB) << ",inf\n";
       }
     }
   }
