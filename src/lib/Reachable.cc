@@ -459,15 +459,15 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
         }
       }
 
-      RA_LOG(F->getName() << " is reachable\n");
+      RA_LOG(F->getName() << " is reachable from " << itr->second.size() << " callers\n");
       auto dist = distances[BB];
       for (auto CI : itr->second) {
         auto CBB = CI->getParent();
         auto CF = CI->getFunction();
-        if (isPrintFn(CF->getName())) {
-          RA_DEBUG("Skip print caller: " << CF->getName() << "\n");
-          continue;
-        }
+        // if (isPrintFn(CF->getName())) {
+        //   RA_DEBUG("Skip print caller: " << CF->getName() << "\n");
+        //   continue;
+        // }
         if (!CI->isIndirectCall()) {
           // for direct calls, prob can be propagated directly
           auto itr2 = distances.find(CBB);
@@ -482,7 +482,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
           // for each call site, check if all its callees have been processed
           double prob = 0.0;
           FuncSet &Callees = UseTypeBasedCallGraph ? calleeByType[CI] : Ctx->Callees[CI];
-          RA_LOG("\tfrom indirect call, callee size = " << Callees.size() << "\n");
+          RA_LOG("\tfrom indirect call @" << CF->getName() << ", callee size = " << Callees.size() << "\n");
           // XXX: skip potentially imprecise callsites?
           if (Callees.size() > 50) {
             RA_DEBUG("Skip indirect call with too many callees\n");
