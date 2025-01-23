@@ -488,8 +488,11 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
             RA_DEBUG("Skip indirect call with too many callees\n");
             continue;
           }
+          // record the call site
+          reachableIndirectCalls.insert(CI);
+          // calculate distance
           for (auto F : Callees) {
-            auto CEBB = const_cast<BasicBlock*>(&F->getEntryBlock());
+            auto CEBB = &F->getEntryBlock();
             if (reachableBBs.find(CEBB) == reachableBBs.end()) {
               continue;
             }
@@ -695,6 +698,42 @@ void ReachableCallGraphPass::dumpPolicy(std::ostream &OS) {
       if (!hasCall) {
         WARNING("Branch reachable but both targets are not!! " << *BB
             << "\nAnd no call in the BB\n");
+      }
+    }
+  }
+
+  OS << "##########\n";
+
+  for (auto const &CI : reachableIndirectCalls) {
+    // dump callsite ID = (BBID, order)
+    auto CBB = CI->getParent();
+    auto CBBID = getBasicBlockId(CBB);
+    OS << CBBID << ",";
+    unsigned order = 0;
+    for (auto &I: *CBB) {
+      if (isa<CallBase>(I)) {
+        order++;
+        if (&I == CI) break;
+      }
+    }
+    OS << order << ":";
+    FuncSet &Callees = UseTypeBasedCallGraph ? calleeByType[CI] : Ctx->Callees[CI];
+    for (auto F : Callees) {
+      auto CEBB = &F->getEntryBlock();
+      auto itr = distances.find(CEBB);
+      if (itr != distances.end()) {
+        RA_DEBUG("Indirect call to " << F->getName() << " at " << CBBID << ": " << itr->second << "\n");
+        OS << F->getGUID() << "," << itr->second * 1000 << ";";
+      }
+    }
+    OS << "\n";
+  }
+
+  // dump unreachable bb
+  if (dumpUnreachable) {
+    for (auto BB : exitBBs) {
+      if (distances.find(BB) == distances.end()) {
+        OS << getBasicBlockId(BB) << ",inf\n";
       }
     }
   }
