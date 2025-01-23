@@ -45,8 +45,8 @@ public:
         std::unordered_set<const BasicBlock*> &reachable);
 
     // debug
-    void dumpDistance(std::ostream &OS, bool dumpSolution = false);
-    void dumpPolicy(std::ostream &OS, bool dumpUnreachable = false);
+    void dumpDistance(std::ostream &OS, bool dumpSolution = false, bool dumpUnreachable = false);
+    void dumpPolicy(std::ostream &OS);
     void dumpCallees();
     void dumpCallers();
 };

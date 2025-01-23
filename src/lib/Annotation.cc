@@ -28,6 +28,12 @@
 #include "Flags.h"
 #include "Common.h"
 
+#if defined(LLVM34)
+#include "llvm/DebugInfo.h"
+#else
+#include "llvm/IR/DebugInfo.h"
+#endif
+
 using namespace llvm;
 
 // static inline bool needAnnotation(Value *V) {

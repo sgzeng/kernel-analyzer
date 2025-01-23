@@ -459,7 +459,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
         }
       }
 
-      RA_LOG(F->getName() << " is reachable\n");
+      RA_LOG(F->getName() << " is reachable from " << itr->second.size() << " callers\n");
       auto dist = distances[BB];
       for (auto CI : itr->second) {
         auto CBB = CI->getParent();
@@ -482,7 +482,7 @@ void ReachableCallGraphPass::run(ModuleList &modules) {
           // for each call site, check if all its callees have been processed
           double prob = 0.0;
           FuncSet &Callees = UseTypeBasedCallGraph ? calleeByType[CI] : Ctx->Callees[CI];
-          RA_LOG("\tfrom indirect call, callee size = " << Callees.size() << "\n");
+          RA_LOG("\tfrom indirect call @" << CF->getName() << ", callee size = " << Callees.size() << "\n");
           // XXX: skip potentially imprecise callsites?
           if (Callees.size() > 50) {
             RA_DEBUG("Skip indirect call with too many callees\n");
@@ -572,23 +572,31 @@ ReachableCallGraphPass::ReachableCallGraphPass(GlobalContext *Ctx_,
 }
 
 std::string ReachableCallGraphPass::getSourceLocation(const BasicBlock *BB) {
-  for (auto &I : *BB) {
-    auto &loc = I.getDebugLoc();
-    if (loc && loc.getLine() != 0) {
-      auto f = loc->getFilename().str();
-      if (f.empty()) {
-        f = BB->getParent()->getParent()->getSourceFileName();
-      }
-      if (f.find("./") == 0) {
-        f = f.substr(2);
-      }
-      return f + ":" + std::to_string(loc->getLine());
+    for (const auto &I : *BB) {
+        auto loc = I.getDebugLoc();
+        if (loc && loc.getLine() != 0) {
+            // Get the filename from the debug location
+            std::string f = loc->getFilename().str();
+            // If filename is empty, get it from the parent function
+            if (f.empty()) {
+                f = BB->getParent()->getParent()->getSourceFileName();
+            }
+            // Remove leading "./" if present
+            if (f.find("./") == 0) {
+                f = f.substr(2);
+            }
+            // Extract the base filename by finding the last '/' or '\\'
+            size_t pos = f.find_last_of("/\\");
+            if (pos != std::string::npos) {
+                f = f.substr(pos + 1);
+            }
+            return f + ":" + std::to_string(loc.getLine());
+        }
     }
-  }
-  return "NoLoc:0";
+    return "NoLoc:0";
 }
 
-void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
+void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution, bool dumpUnreachable) {
   std::deque<const BasicBlock*> worklist;
   std::unordered_set<const BasicBlock*> visited;
   double currentDist = std::numeric_limits<double>::max();;
@@ -640,9 +648,17 @@ void ReachableCallGraphPass::dumpDistance(std::ostream &OS, bool dumpSolution) {
       }
     }
   }
+  // dump unreachable bb
+  if (dumpUnreachable) {
+    for (auto BB : exitBBs) {
+      if (distances.find(BB) == distances.end()) {
+        OS << getBasicBlockId(BB) << "," << getSourceLocation(BB) << ",-1\n";
+      }
+    }
+  }
 }
 
-void ReachableCallGraphPass::dumpPolicy(std::ostream &OS, bool dumpUnreachable) {
+void ReachableCallGraphPass::dumpPolicy(std::ostream &OS) {
 
   // set precision
   OS << std::fixed << std::setprecision(6);
