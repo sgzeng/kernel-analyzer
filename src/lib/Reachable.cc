@@ -728,15 +728,6 @@ void ReachableCallGraphPass::dumpPolicy(std::ostream &OS) {
     }
     OS << "\n";
   }
-
-  // dump unreachable bb
-  if (dumpUnreachable) {
-    for (auto BB : exitBBs) {
-      if (distances.find(BB) == distances.end()) {
-        OS << getBasicBlockId(BB) << ",inf\n";
-      }
-    }
-  }
 }
 
 void ReachableCallGraphPass::dumpCallees() {
