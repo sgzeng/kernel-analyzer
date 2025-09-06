@@ -254,21 +254,21 @@ int main(int argc, char **argv) {
     RCGPass.dumpCallees(callercallee);
     RCGPass.dumpCallers(calleecaller);
   }
-  if (!DumpPolicy.empty()) {
-    std::ofstream policy(DumpPolicy);
-    RCGPass.dumpPolicy(policy);
-  }
-  if (!DumpDistance.empty()) {
-    std::ofstream distance(DumpDistance);
-    RCGPass.dumpDistance(distance, true);
-  }
-  if (!DumpAnnotatedIR.empty()) {
-    RCGPass.annotateModules(GlobalCtx.Modules, DumpAnnotatedIR);
-  }
-  if (!DumpCriticalBBs.empty()) {
-    std::ofstream criticalBBs(DumpCriticalBBs);
-    RCGPass.dumpCriticalBBs(criticalBBs);
-  }
+  // if (!DumpPolicy.empty()) {
+  //   std::ofstream policy(DumpPolicy);
+  //   RCGPass.dumpPolicy(policy);
+  // }
+  // if (!DumpDistance.empty()) {
+  //   std::ofstream distance(DumpDistance);
+  //   RCGPass.dumpDistance(distance, true);
+  // }
+  // if (!DumpAnnotatedIR.empty()) {
+  //   RCGPass.annotateModules(GlobalCtx.Modules, DumpAnnotatedIR);
+  // }
+  // if (!DumpCriticalBBs.empty()) {
+  //   std::ofstream criticalBBs(DumpCriticalBBs);
+  //   RCGPass.dumpCriticalBBs(criticalBBs);
+  // }
 
   return 0;
 }
